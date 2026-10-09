@@ -12,10 +12,13 @@
 # <repo>/tt, PYTHONPATH tt-metal + <repo>/tt), FNX_DATA (fnx.paths: the expert store, the drafter's BFP4 experts,
 # caches, kcache = TT_METAL_CACHE, logs) and its override directories, and the parent directory of every absolute
 # path argument (--native, --ple-gguf, --pack, --mtp).  The container runs as the caller's uid:gid.
-# Signals: SIGTERM/SIGINT/SIGHUP (the server's close() after 20 s) are forwarded into the container (tini -> python
-# closes the device and exits); if it is still there 20 s later (an engine hung in device code never reads a signal
-# or EOF), it is removed with `docker rm -f` and the board is reset (tt-smi -r 0, still under the lock), so a hang
-# never keeps the shared card.  Any other exit of this script removes a leftover container the same way.
+# Signals: SIGTERM/SIGHUP (the server's close() 20 s after its QUIT) are forwarded into the container (tini ->
+# python closes the device and exits); if it is still there 20 s later (an engine hung in device code never reads a
+# signal or EOF), it is removed with `docker rm -f` and the board is reset (tt-smi -r 0, still under the lock), so a
+# hang never keeps the shared card.  Any other exit of this script removes a leftover container the same way.
+# SIGINT is ignored once the engine runs, and the docker client runs in its own session (setsid): a terminal's
+# Ctrl+C reaches the server, whose QUIT (or the stdin EOF of its exit) ends the engine cleanly, instead of racing it
+# with a KeyboardInterrupt inside device code.
 # Start bound: from the moment the lock is held, the engine has FNX_READY_S seconds (default 900; 0 = none) to print
 # READY (it touches FNX_READY_FILE then); otherwise this script ends it as on SIGTERM (container removed, board
 # reset).  The lock wait itself is not bounded: run the server with STRATA_ENGINE_READY_S=0 (its #1317 READY timeout
@@ -56,6 +59,7 @@ VOLS=()
 for d in "${MOUNTS[@]}"; do VOLS+=(-v "$d:$d"); done
 for d in /dev/hugepages /dev/hugepages-1G; do [ -d "$d" ] && VOLS+=(-v "$d:$d"); done
 echo "tt-engine: container $NAME; mounts ${MOUNTS[*]}" >&2
+trap '' INT                                         # from here on (watchdog included): see Signals above
 WATCH=
 if [ "${FNX_READY_S:-900}" != 0 ]; then
   (  # only stderr (the engine log) kept: no lock fd (a sleeping watchdog never holds the lock) and no protocol pipe
@@ -81,7 +85,7 @@ force_remove() {     # the engine did not end by itself: remove it and reset the
   fi
 }
 on_signal() {
-  trap - TERM INT HUP
+  trap - TERM HUP
   docker kill --signal TERM "$NAME" >/dev/null 2>&1
   for _ in $(seq 20); do alive || exit 143; sleep 1; done
   force_remove
@@ -93,8 +97,8 @@ cleanup() {
   force_remove
 }
 trap cleanup EXIT
-trap on_signal TERM INT HUP
-docker run -i --rm --init --name "$NAME" --device /dev/tenstorrent:/dev/tenstorrent "${VOLS[@]}" \
+trap on_signal TERM HUP
+setsid docker run -i --rm --init --name "$NAME" --device /dev/tenstorrent:/dev/tenstorrent "${VOLS[@]}" \
   --user "$(id -u):$(id -g)" -e HOME=/tmp -w "$TTDIR" \
   -e PYTHONPATH="$TT_METAL:$TTDIR" -e TT_METAL_CACHE="$KCACHE" -e TT_METAL_HOME="$TT_METAL" -e PYTHONUNBUFFERED=1 \
   "${ENVS[@]}" --entrypoint "$TT_METAL/python_env/bin/python" "$IMAGE" -m fnx.serve_engine "$@" <&0 &
