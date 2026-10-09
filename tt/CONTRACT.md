@@ -124,7 +124,9 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
 - `tools/fnx-serve.sh`: development launcher, `CONFIG=<run config> [PORT=8090] tools/fnx-serve.sh` runs this
   repository's serve/server.py with the dev venv (`PY`, default FNX_DATA/venv/bin/python) and STRATA_ENGINE_READY_S=0.
   A setup install starts through its run-<tag>.sh (tt/serve/server_tt.py) instead.  The dev machine's live server
-  (`/var/tmp/strata-tt/strata-fnx-coder.json`, idle_unload_s 900) still runs the pre-import tree flashnext_tt.
+  config `/var/tmp/strata-tt/strata-fnx-coder.json` (port 8090, idle_unload_s 900) is this tree's dev config
+  (`fnx/tests/test_serve.py` dev_config form); `/var/tmp/strata-tt/flashnext_tt` is a symlink to this `tt/` since
+  2026-10-08 (the pre-import copy: flashnext_tt.retired-20261008).
 - TtModel additions: `forward(..., head=True, read_logits=True, keep_R=False, verify=False) -> (logits, ids[, R])` (R = final 4-stream residual before output_hc), `commit(n_keep)` (GDN shadow restore + `GdnFused.replay` of the kept rows, `Ple.commit`, pos), `snapshot()` / `restore()` (restore drops the PLE window; snapshots only at committed states).
 - Speculative decoding (MTP) is ON by default: engine `--spec N` (default 4 = next token + 3 drafts; `FNX_SPEC`; 1 = plain),
   `--spec-min-p`; READY INFO reports spec/mtp_max. Exact-match acceptance; output equals plain decode bitwise because every
