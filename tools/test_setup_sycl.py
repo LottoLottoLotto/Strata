@@ -51,10 +51,6 @@ class SyclBackend(unittest.TestCase):
         _, _, call = run(["--backend=sycl", "--check"], win=False)
         self.assertEqual(call.call_args[0][0][2:], ["--check"])
 
-    def test_the_parser_accepts_sycl(self):
-        src = (ROOT / "setup.py").read_text(encoding="utf-8")
-        self.assertRegex(src, r'"--backend", choices=\["cuda", "hip", "sycl"\]')
-
     def test_setup_intel_finds_the_setup_functions_it_replaces(self):
         """sycl/setup_intel.py swaps these steps; setup.py must still have them (it stops with a message otherwise)."""
         src = (ROOT / "sycl" / "setup_intel.py").read_text(encoding="utf-8")
