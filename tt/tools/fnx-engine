@@ -1,0 +1,92 @@
+#!/bin/bash
+# fnx-engine --serve [Strata engine args...]   Strata's engine protocol on the P150 (python -m fnx.serve_engine).
+#
+# What serve/server.py spawns as its engine "exe" (config: /var/tmp/strata-tt/strata-fnx-coder.json): stdin/stdout
+# are the protocol pipe, stderr is the server's engine log.  Takes the shared device lock
+# (/var/tmp/gemma4-12b/device.lock, every team on this card) and waits for any device user that bypassed it, then
+# becomes `docker run -i --rm --init` of the qwen36 TT image (same mounts/env as tools/devrun.sh): this process IS
+# the docker client, run as this script's child; the script holds the lock's file descriptor until it exits.  QUIT or
+# EOF on stdin ends the engine, which closes the device; the container ends and the lock is released.  The container
+# is named fnx-engine-<this pid> (printed on stderr).  SIGTERM/SIGINT/SIGHUP (the server's close() after 20 s) are
+# forwarded into the container (tini -> python closes the device and exits); if it is still there 20 s later (an
+# engine hung in device code never reads a signal or EOF), it is removed with `docker rm -f` and the board is reset
+# (tt-smi -r 0, still under the lock), so a hang never keeps the shared card.  Any other exit of this script removes
+# a leftover container the same way.  Start bound: from the moment the lock is held, the engine has FNX_READY_S
+# seconds (default 900; 0 = none) to print READY (it touches FNX_READY_FILE then); otherwise this script ends it as on
+# SIGTERM (container removed, board reset).  The lock wait itself is not bounded: the server's own READY timeout is
+# off in tools/fnx-serve.sh, see there.  Env: IMAGE (default qwen36-p150:vllm-mtp-pc-x4); FNX_*, STRATA_*,
+# TT_METAL_LOGGER* and TTNN_* pass through.
+set -uo pipefail
+W=/var/tmp/strata-tt
+LOCK=/var/tmp/gemma4-12b/device.lock
+IMAGE=${IMAGE:-qwen36-p150:vllm-mtp-pc-x4}
+TT=/home/container_app_user/tt-metal
+mkdir -p $W/kcache
+exec 9<>"$LOCK" || { echo "fnx-engine: cannot open the device lock $LOCK" >&2; exit 1; }
+if ! flock -n 9; then
+  echo "fnx-engine: waiting for the device lock $LOCK (another device job is running)" >&2
+  flock 9
+fi
+waited=0
+while grep -q . /proc/driver/tenstorrent/0/pids 2>/dev/null; do
+  [ $waited = 0 ] && echo "fnx-engine: waiting for the device's current user to exit" >&2
+  waited=1
+  sleep 2
+done
+echo "fnx-engine: device lock held by pid $$; starting the engine in $IMAGE" >&2
+ENVS=()
+while IFS= read -r kv; do ENVS+=(-e "$kv"); done < <(env | grep -E '^(FNX_|STRATA_|TT_METAL_LOGGER|TTNN_)')
+NAME="fnx-engine-$$"
+echo "fnx-engine: container $NAME" >&2
+READY_FILE=$W/logs/$NAME.ready                       # touched by fnx.serve_engine when it prints READY
+mkdir -p $W/logs && rm -f "$READY_FILE"
+export FNX_READY_FILE=$READY_FILE
+ENVS+=(-e "FNX_READY_FILE=$READY_FILE")
+WATCH=
+if [ "${FNX_READY_S:-900}" != 0 ]; then
+  (  # only stderr (the engine log) kept: no lock fd (a sleeping watchdog never holds the lock) and no protocol pipe
+     # (an open stdout would keep the server from ever seeing the engine's EOF); its sleep dies with it
+    exec 9>&- 1>/dev/null 0</dev/null
+    sleep "${FNX_READY_S:-900}" &
+    SP=$!
+    trap 'kill $SP 2>/dev/null; exit 0' TERM
+    wait $SP
+    if [ ! -e "$READY_FILE" ]; then
+      echo "fnx-engine: no READY within ${FNX_READY_S:-900} s of holding the device lock: ending the engine" >&2
+      kill -TERM $$
+    fi
+  ) &
+  WATCH=$!
+fi
+alive() { [ -n "$(docker ps -q --filter "name=^${NAME}$")" ]; }
+force_remove() {     # the engine did not end by itself: remove it and reset the board before releasing the lock
+  if alive; then
+    echo "fnx-engine: removing the unresponsive container $NAME and resetting the board" >&2
+    docker rm -f "$NAME" >/dev/null 2>&1
+    "${TT_SMI:-$HOME/.local/bin/tt-smi}" -r 0 >&2 2>&1 || echo "fnx-engine: board reset failed" >&2
+  fi
+}
+on_signal() {
+  trap - TERM INT HUP
+  docker kill --signal TERM "$NAME" >/dev/null 2>&1
+  for _ in $(seq 20); do alive || exit 143; sleep 1; done
+  force_remove
+  exit 143
+}
+cleanup() {
+  [ -n "$WATCH" ] && kill "$WATCH" 2>/dev/null
+  rm -f "$READY_FILE"
+  force_remove
+}
+trap cleanup EXIT
+trap on_signal TERM INT HUP
+docker run -i --rm --init --name "$NAME" \
+  --device /dev/tenstorrent:/dev/tenstorrent -v /dev/hugepages:/dev/hugepages -v /dev/hugepages-1G:/dev/hugepages-1G \
+  -v $W:$W --user "$(id -u):$(id -g)" -e HOME=/tmp -w $W/flashnext_tt \
+  -e PYTHONPATH=$TT:$W/flashnext_tt -e TT_METAL_CACHE=$W/kcache -e TT_METAL_HOME=$TT -e PYTHONUNBUFFERED=1 \
+  "${ENVS[@]}" --entrypoint $TT/python_env/bin/python "$IMAGE" -m fnx.serve_engine "$@" <&0 &
+CHILD=$!
+wait "$CHILD"
+RC=$?
+while kill -0 "$CHILD" 2>/dev/null; do wait "$CHILD"; RC=$?; done   # a signal interrupted wait: the trap ran
+exit $RC

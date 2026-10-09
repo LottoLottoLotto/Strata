@@ -1,0 +1,22 @@
+# libfnx_cpu.so: Strata's CPU expert kernels behind a C ABI, for the Tenstorrent port (fnx_cpu.cpp).
+#   cmake -S . -B build -DSTRATA_SRC=<Strata checkout> -DSTRATA_GGML_DIR=<llama.cpp 3cf03257 source>
+# Builds Strata's strata_kernels_cpu + ggml-cpu (no CUDA) as position-independent code and links them in.
+cmake_minimum_required(VERSION 3.24)
+project(fnx_cpu LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(STRATA_SRC "" CACHE PATH "Strata checkout")
+if(NOT EXISTS "${STRATA_SRC}/CMakeLists.txt")
+  message(FATAL_ERROR "STRATA_SRC must point at a Strata checkout")
+endif()
+set(STRATA_ENABLE_CUDA OFF CACHE BOOL "" FORCE)
+set(STRATA_ENABLE_HIP OFF CACHE BOOL "" FORCE)
+set(STRATA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${STRATA_SRC} strata EXCLUDE_FROM_ALL)
+add_library(fnx_cpu SHARED fnx_cpu.cpp)
+target_link_libraries(fnx_cpu PRIVATE strata_kernels_cpu)
+target_include_directories(fnx_cpu PRIVATE ${STRATA_SRC}/include)
