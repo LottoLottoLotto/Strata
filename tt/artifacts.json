@@ -1,6 +1,6 @@
 {
  "repo": "Lottolabs/Qwen3.8-Flash-Next-Coder-P150",
- "revision": null,
+ "revision": "1f12b75040bddb0deac5409b29c1901283320e78",
  "plan": "bfp4-tiered-2.4e+10",
  "files": [
   {
