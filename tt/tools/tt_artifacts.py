@@ -43,7 +43,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 TT = Path(__file__).resolve().parents[1]                 # <repo>/tt
@@ -341,8 +341,9 @@ def cmd_verify(a) -> int:
 
 
 # ----------------------------------------------------------------------------------------------------------- fetch
-def download(url: str, dst: Path, f: dict, prog: Progress) -> None:
-    """Resumable download into dst.part (HTTP range), sha256 over the whole file, then an atomic rename."""
+def download(url: str, dst: Path, f: dict, prog: Progress, stop: threading.Event) -> bool:
+    """Resumable download into dst.part (HTTP range), sha256 over the whole file, then an atomic rename.  True when
+    dst is in place; False when `stop` was set (another file failed): the .part stays for the next run."""
     part = dst.with_name(dst.name + ".part")
     size, sha = f["size"], f["sha256"]
     bad_sums = 0
@@ -368,7 +369,7 @@ def download(url: str, dst: Path, f: dict, prog: Progress) -> None:
                         h = hashlib.sha256()
                     elif have:
                         say(f"  {f['path']}: resuming at {have / 1e6:.0f} MB")
-                    while have < size:
+                    while have < size and not stop.is_set():
                         b = r.read(BLOCK)
                         if not b:
                             break
@@ -378,6 +379,8 @@ def download(url: str, dst: Path, f: dict, prog: Progress) -> None:
                         prog.add(len(b))
                     out.flush()
                     os.fsync(out.fileno())
+            if stop.is_set():
+                return False
             if have != size:
                 raise OSError(f"connection ended at {have:,} of {size:,} bytes")
             if h.hexdigest() != sha:
@@ -389,14 +392,15 @@ def download(url: str, dst: Path, f: dict, prog: Progress) -> None:
                 say(f"  {f['path']}: sha256 mismatch, downloading it again")
                 continue
             os.replace(part, dst)
-            return
+            return True
         except urllib.error.HTTPError as e:
             if e.code in (401, 403, 404):
                 fail(f"{f['path']}: {e.code} {e.reason} from {url.split('/')[2]} ({url})")
             say(f"  {f['path']}: {e} (attempt {attempt}/{ATTEMPTS}), retrying in 10 s")
         except OSError as e:
             say(f"  {f['path']}: {e} (attempt {attempt}/{ATTEMPTS}), retrying in 10 s")
-        time.sleep(10)
+        if stop.wait(10):
+            return False
     fail(f"{f['path']}: could not finish the download after {ATTEMPTS} attempts (run it again: it resumes)")
 
 
@@ -437,14 +441,22 @@ def cmd_fetch(a) -> int:
     say(f"fetch: {len(todo)} of {len(files)} files, {gb(need)} from {hf_endpoint()}/{man['repo']} "
         f"@ {man['revision'][:12]} into {data}")
     prog = Progress("tt artifacts", total, done_bytes + have)
+    stop = threading.Event()
 
     def one(f):
         dst = local(data, f["path"])
         dst.parent.mkdir(parents=True, exist_ok=True)
-        download(resolve_url(man, f["path"]), dst, f, prog)
-        stamps.set(f["path"], dst, f["sha256"])
-    with ThreadPoolExecutor(max(1, a.jobs)) as ex:
-        list(ex.map(one, todo))
+        if download(resolve_url(man, f["path"]), dst, f, prog, stop):
+            stamps.set(f["path"], dst, f["sha256"])
+    ex = ThreadPoolExecutor(max(1, a.jobs))
+    try:
+        for fut in as_completed([ex.submit(one, f) for f in todo]):
+            fut.result()                                 # the first failure ends the run (the others stop too)
+    except BaseException:
+        stop.set()
+        raise
+    finally:
+        ex.shutdown(wait=True, cancel_futures=True)
     prog.close()
     say(f"fetch: {len(files)} files, {gb(total)} in {data}, sha256 verified")
     return 0
