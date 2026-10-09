@@ -2,10 +2,10 @@
 weights everywhere, routed experts included, i.e. fnx.ref.model.RefModel with float experts (RefModel's math, module
 by module: embed, PLE, HC read/write, GDN, QSA, MoE with ref.moe.expert_parts_float, output_hc, head).
 
-    cd /var/tmp/strata-tt/flashnext_tt
-    /var/tmp/strata-tt/venv/bin/python -m fnx.eval.torchref build [--topk 256] [--records id,..]
-    /var/tmp/strata-tt/venv/bin/python -m fnx.eval.torchref check [--record ID] [--tokens 64]
-    /var/tmp/strata-tt/venv/bin/python -m fnx.eval.torchref noise [--chunk 1000]
+    cd tt          (the repository's tt/; the host venv's python)
+    python -m fnx.eval.torchref build [--topk 256] [--records id,..]
+    python -m fnx.eval.torchref check [--record ID] [--tokens 64]
+    python -m fnx.eval.torchref noise [--chunk 1000]
 
 build: every record of fnx.eval.data's evalset, layer-major (all sequences through layer L, then L+1: one layer's 256
 dequantized experts, 5 GB f32, are on the GPU at a time; worker processes dequantize the next layers into /dev/shm).

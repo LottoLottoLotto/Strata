@@ -23,24 +23,23 @@ are BFP4 or BFP2 per matrix so that the PCIe bytes per token (sum over host expe
 drop by P% at the least predicted KL: the same knapsack as the budgets above with per-expert bytes = u_Le x option
 bytes (host experts only; resident experts keep 444 and cost no PCIe bytes).
 
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.alloc [--tiered 24.4e9] [--h2 0.25,0.5] [--budgets 30e9,28.5e9]
+    python -m fnx.quant.alloc [--tiered 24.4e9] [--h2 0.25,0.5] [--budgets 30e9,28.5e9]     (host venv, cwd tt/)
         [--write]
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from ..config import N_EXPERT, N_LAYERS
 from . import store
 from .pipeline import COMBOS
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 SIZE = {"4": 921600, "2": 512000}
 K0 = 64.0
 

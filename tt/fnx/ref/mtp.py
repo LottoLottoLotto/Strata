@@ -1,12 +1,13 @@
 """MTP draft layer (speculative decoding), numpy float32 reference of Strata's drafter (spec Part 7 §3, src/core/mtp.cpp).
 
-Weights: the runtime form Strata's engine reads (`--mtp <dir>/rt`, built by tools/mtp_fetch.py -> mtp_pack.py
---experts q2_0 -> mtp_rt.py, setup.py:4750-4761): rt/dense.txt + dense.bin (big projections Q8_0, hyper-connection
-and router weights BF16, RMSNorm weights F32 already "1 + w") and rt/draft_vocab.bin (int32 ids of the draft head's
-rows, the cjk subset).  The 512 routed experts (Q2_0 gate/up/down) come from mtp-q2_0.gguf (experts.bin is a lossless
-relayout of the same blocks): host CPU through Strata's kernels (fnx.cpu_experts.CpuExperts, layer slot MTP_LAYER,
-the canonical Q2_0 pool arithmetic) or all-float dequantized (`float_experts`).  The token embedding and the head
-rows are the main GGUF's (token_embd IQ4_XS, output.weight Q6_K rows of the subset).
+Weights: the runtime form Strata's engine reads (`--mtp <data>/mtp/rt`, built by tools/mtp_fetch.py -> mtp_pack.py
+--experts q2_0 -> mtp_rt.py, setup.py): rt/dense.txt + dense.bin (big projections Q8_0, hyper-connection and router
+weights BF16, RMSNorm weights F32 already "1 + w") and rt/draft_vocab.bin (int32 ids of the draft head's rows, the
+subset setup chose).  The 512 routed experts (Q2_0 gate/up/down) come from mtp-q2_0.gguf beside rt/ (experts.bin is a
+lossless relayout of the same blocks): host CPU through Strata's kernels (fnx.cpu_experts.CpuExperts, layer slot
+MTP_LAYER, the canonical Q2_0 pool arithmetic) or all-float dequantized (`float_experts`); the device's BFP4 copy
+and the routing profile are this port's own files under FNX_DATA/mtp (fnx.paths.MTP).  The token embedding and the
+head rows are the main GGUF's (token_embd IQ4_XS, output.weight Q6_K rows of the subset).
 
 Cell c pairs the main model's final 4-stream residual at position c (after the last layer's write, BEFORE output_hc)
 with the token at c+1; RoPE position c; its output predicts the token at c+2 (mtp.hpp:3-7).  One cell, full layer:
@@ -33,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from ..config import HC, HEAD_DIM, N_EMBD, N_HEAD, N_HEAD_KV, N_USED
 from .embed import embed
 from .hc import hc_read, hc_write
@@ -40,14 +42,14 @@ from .moe import combine, route, sigmoid, silu
 from .qsa import SCALE, rms, rope64, rope_cos_sin
 
 f32, f16, F64 = np.float32, np.float16, np.float64
-MTP_DIR = Path(os.environ.get("FNX_MTP_DIR", "/var/tmp/strata-tt/mtp"))
+MTP_DIR = paths.MTP                # this port's MTP files: experts-bfp4-<method>.u8, PROFILE
 MTP_LAYER = 48                     # the drafter's slot in a shared CpuExperts (main layers are 0..47)
 MTP_EXPERTS = 512                  # the canonical (unpruned) MTP MoE (spec §3.1)
 N_FF = 640
 BFP4_SHAPE = ((N_EMBD, N_FF), (N_EMBD, N_FF), (N_FF, N_EMBD))     # W^T [in, out] of gate, up, down
 BFP4_ROW = N_EMBD * N_FF // 16 + N_EMBD * N_FF // 2               # bytes of one BFP4 store row (fnx.quant.bfp)
 BFP4_METHOD = "search"
-PROFILE = "expert-profile.npy"     # MTP_DIR file: routing counts [512] of the drafter's MoE (fnx.tests.test_mtp profile)
+PROFILE = paths.MTP_PROFILE.name  # MTP_DIR file: routing counts [512] of the drafter's MoE (fnx.tests.test_mtp profile)
 GROUP = N_HEAD // N_HEAD_KV
 EXPERT_GU = "mtp.layers.0.mlp.experts.gate_up_proj"
 EXPERT_DN = "mtp.layers.0.mlp.experts.down_proj"
@@ -66,11 +68,12 @@ def dequant_q8_0(raw: np.ndarray, rows: int, cols: int) -> np.ndarray:
 
 class MtpWeights:
     """The drafter's weights.  `get(short)` = a dense.txt tensor as float32 (torch [out, in] orientation; 1-D norms
-    [n]); `get("mtp.hc_attn_down.weight")`-style names serve the HC reads (fnx.ref.hc.hc_weights / tt.hc.HcRead)."""
+    [n]); `get("mtp.hc_attn_down.weight")`-style names serve the HC reads (fnx.ref.hc.hc_weights / tt.hc.HcRead).
+    rt: Strata's MTP runtime directory (the engine's --mtp; default fnx.paths.MTP_RT); `dir` = MTP_DIR."""
 
-    def __init__(self, mtp_dir: str | os.PathLike = MTP_DIR, vocab_file: str | None = None):
-        self.dir = Path(mtp_dir)
-        rt = self.dir / "rt"
+    def __init__(self, rt: str | os.PathLike | None = None, vocab_file: str | None = None):
+        self.dir = MTP_DIR
+        self.rt = rt = Path(rt) if rt else paths.MTP_RT
         self.index = {}
         for line in (rt / "dense.txt").read_text().split("\n"):
             if line.strip():
@@ -119,7 +122,7 @@ class MtpWeights:
     def gguf(self):
         if self._gguf is None:
             from ..gguf_load import Model
-            self._gguf = Model(self.dir / "mtp-q2_0.gguf")
+            self._gguf = Model(self.rt.parent / "mtp-q2_0.gguf")
         return self._gguf
 
     def expert(self, e: int, fmt: str = "q2_0") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -134,13 +137,13 @@ class MtpWeights:
 
     def bfp4_rows(self, method: str = BFP4_METHOD) -> np.ndarray:
         """The routed experts for the device (fnx.tt.mtp): fnx.quant BFP4 store rows of W^T [in, out] quantized from
-        their Q2_0 values, uint8 [512, 3 (gate, up, down), 921600], built once into MTP_DIR/experts-bfp4-<method>.u8
+        their Q2_0 values, uint8 [512, 3 (gate, up, down), 921600], built once into fnx.paths.mtp_bfp4(method)
         (memory-mapped).  method "search": per-block min-MSE shared exponent (fnx.quant.methods.search; the Q2_0
         values are 4-level per 64-input block with a fp16 scale, so a BFP4 block of 16 output rows cannot hold them
         exactly: 7.7% rel weight error vs 8.0% for "rtn", tt-metal's own conversion)."""
         key = f"bfp4_{method}"
         if key not in self._cache:
-            path = self.dir / f"experts-bfp4-{method}.u8"
+            path = paths.mtp_bfp4(method)
             shape = (MTP_EXPERTS, 3, BFP4_ROW)
             if not path.exists():
                 self._build_bfp4(path, shape, method)
@@ -153,6 +156,7 @@ class MtpWeights:
         from ..quant import bfp, methods
         quant = {"rtn": methods.rtn, "search": methods.search}[method]
         tmp = path.with_suffix(".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
         out = np.memmap(tmp, np.uint8, "w+", shape=shape)
         for e in range(MTP_EXPERTS):
             for m, W in enumerate(self.expert(e)):

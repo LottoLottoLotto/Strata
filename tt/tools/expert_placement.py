@@ -2,7 +2,7 @@
 """Pick the routed experts fnx.tt.moe keeps on the P150, from measured routing counts (--counts) or Strata's profile.
 
     tools/expert_placement.py [--free-gb 27.29 | --measure] [--headroom-gb 3] [--mtp-gb 0.5] [--dtype bfloat8_b] [--out PATH]
-                              [--golden chat,code,doc] [--curve] [--counts /var/tmp/strata-tt/quant/stats]
+                              [--golden chat,code,doc] [--curve] [--counts FNX_DATA/quant/stats]
 
 --counts ranks the pairs by measured routing frequency (fnx.quant.pipeline's calibration counts) instead of the
 profile; prefer it: the profile is the original 512-expert ranking mapped onto the kept experts (mapping verified
@@ -30,12 +30,15 @@ from __future__ import annotations
 import argparse
 import json
 import struct
+import sys
 from pathlib import Path
 
 import numpy as np
 
-STRATA = Path("/var/tmp/strata-tt/Strata")
-GOLDEN = Path("/var/tmp/strata-tt/golden")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))          # tt/: import fnx
+from fnx import paths  # noqa: E402
+
+GOLDEN = paths.GOLDEN
 N_LAYERS, N_EXPERT, TILES = 48, 256, 3 * 20 * 80
 TILE_BYTES = {"bfloat8_b": 1088, "bfloat4_b": 576, "bfloat16": 2048}
 
@@ -117,9 +120,9 @@ def measure_free_gb() -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--profile", type=Path, default=STRATA / "data" / "expert-profile-coder.bin")
+    ap.add_argument("--profile", type=Path, default=paths.EXPERT_PROFILE)
     ap.add_argument("--counts", type=Path, default=None,
-                    help="rank by measured routing counts (fnx.quant stats dir, e.g. /var/tmp/strata-tt/quant/stats) "
+                    help=f"rank by measured routing counts (fnx.quant stats dir, e.g. {paths.QUANT / 'stats'}) "
                          "instead of --profile")
     ap.add_argument("--free-gb", type=float, default=27.29,
                     help="free device DRAM after TtModel loads (measured 2026-10-06: 27.29 GB)")
@@ -152,7 +155,7 @@ def main() -> int:
            "per_layer": {"min": int(counts.min()), "median": int(np.median(counts)), "max": int(counts.max())},
            "golden": {g: score(mask, *r) for g, r in golden.items()},
            "layers": [np.nonzero(mask[l])[0].tolist() for l in range(N_LAYERS)]}
-    out = a.out or Path(f"/var/tmp/strata-tt/cache/placement/coder-{a.dtype}-{n}.json")
+    out = a.out or paths.CACHE / "placement" / f"coder-{a.dtype}-{n}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res))
     print(f"{n} experts ({n * per_expert / 1e9:.2f} GB {a.dtype}; free {free:.2f} GB - headroom {a.headroom_gb} GB - MTP {a.mtp_gb} GB), "

@@ -2,9 +2,9 @@
 
 `Weights(model).get(name)` returns the tensor GGUF calls `name` (e.g. "blk.3.attn_q.weight") as float32 in numpy
 order (GGUF ne reversed: a projection is (n_out, n_in)).  Quantized GGUF blocks are dequantized once (gguf-py is
-slow) and kept as .npy under FNX_CACHE (default /var/tmp/strata-tt/cache/dequant/<shard1 stem>/); float tensors
-are read straight from the mapping.  Routed experts (ffn_{gate,up,down}_exps) are NOT served here: they are 23 GiB;
-use `model.get_expert` or fnx.cpu_experts.
+slow) and kept as .npy under fnx.paths.DEQUANT/<shard1 stem>/ (FNX_CACHE/dequant, default FNX_DATA/cache/dequant);
+float tensors are read straight from the mapping.  Routed experts (ffn_{gate,up,down}_exps) are NOT served here:
+they are 23 GiB; use `model.get_expert` or fnx.cpu_experts.
 
 Every value is exactly the GGUF's: no transforms (Strata applies none for the Coder: gammas are final multipliers,
 ssm_a is already negative - spec §A.4).
@@ -16,17 +16,20 @@ from pathlib import Path
 
 import numpy as np
 
+from . import paths
 from .gguf_load import Model
 
-DEFAULT_SHARD1 = "/var/tmp/strata-tt/models/coder/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
+DEFAULT_SHARD1 = str(paths.SHARD1)
 FLOAT = {"F32", "F16", "BF16"}
 
 
 class Weights:
-    def __init__(self, model: Model | str | None = None, cache_dir: str | None = None):
-        self.model = model if isinstance(model, Model) else Model(model or os.environ.get("FNX_GGUF", DEFAULT_SHARD1))
+    def __init__(self, model: Model | str | None = None, cache_dir: str | None = None, ple: str | None = None):
+        """model: a Model or shard 1's path (default fnx.paths.SHARD1); ple: the shard with the PLE table (Strata's
+        --ple-gguf; default: the shard name's other shards)."""
+        self.model = model if isinstance(model, Model) else Model(model or DEFAULT_SHARD1, [ple] if ple else None)
         stem = Path(self.model.files[0].path).name.removesuffix(".gguf")
-        self.cache = Path(cache_dir or os.environ.get("FNX_CACHE", "/var/tmp/strata-tt/cache")) / "dequant" / stem
+        self.cache = (Path(cache_dir) if cache_dir else paths.CACHE) / "dequant" / stem
         self.cache.mkdir(parents=True, exist_ok=True)
 
     def __contains__(self, name: str) -> bool:

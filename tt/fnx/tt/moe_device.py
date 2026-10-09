@@ -49,6 +49,7 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..config import N_EMBD, N_EXPERT, N_FF, N_USED
 from ..quant import bfp as qbfp
 
@@ -221,7 +222,7 @@ def quant_layer(w, L: int, plan, shared_fmt: int = F_BF16, host: np.ndarray | No
 def profile_plan(L: int, n_bfp4: int, profile=None) -> np.ndarray:
     """[256] format codes: layer L's n_bfp4 hottest experts (Strata's Coder profile) bfp4, the rest bfp2."""
     import struct
-    path = Path(profile or "/var/tmp/strata-tt/Strata/data/expert-profile-coder.bin")
+    path = Path(profile or paths.EXPERT_PROFILE)
     b = path.read_bytes()
     n = struct.unpack("<5I", b[4:24])[4]
     pairs = np.frombuffer(b, dtype="<u2", count=2 * n, offset=24).reshape(n, 2).astype(np.int32)

@@ -3,24 +3,25 @@
 Shapes are numpy order (GGUF's ne reversed): a GGUF weight with ne = [n_in, n_out] comes back as (n_out, n_in),
 an expert stack ne = [n_in, n_out, n_expert] as (n_expert, n_out, n_in).
 
-Dequantization: gguf-py (llama.cpp's, path from GGUF_PY or the default below) for every ggml type it knows, and a
-vectorized Q2_0 (type 42, Strata's GSQ-RCO routed-expert encoding, absent from gguf-py): 64 values per 18-byte block,
-fp16 scale d, 2-bit codes LSB-first, value = (code - 1) * d - Strata's tools/gguf_writer.py::dequantize_q2_0.
+Dequantization: gguf-py (llama.cpp's: fnx.paths.GGUF_PY when it exists, else the installed `gguf`) for every ggml
+type it knows, and a vectorized Q2_0 (type 42, Strata's GSQ-RCO routed-expert encoding, absent from gguf-py): 64
+values per 18-byte block, fp16 scale d, 2-bit codes LSB-first, value = (code - 1) * d - Strata's
+tools/gguf_writer.py::dequantize_q2_0.
 """
 from __future__ import annotations
 
 import mmap
-import os
 import re
 import sys
 from pathlib import Path
 
 import numpy as np
 
-STRATA_TOOLS = Path(os.environ.get("STRATA_TOOLS", "/var/tmp/strata-tt/Strata/tools"))
-GGUF_PY = Path(os.environ.get("GGUF_PY", "/home/lotto/llama.cpp/gguf-py"))
+from . import paths
+
+STRATA_TOOLS = paths.STRATA_TOOLS
 sys.path.insert(0, str(STRATA_TOOLS))
-sys.path.insert(0, str(GGUF_PY))
+sys.path.insert(0, str(paths.GGUF_PY))
 
 from gguf_reader import BLOCK_GEOMETRY, GGUFFile  # noqa: E402  Strata's header reader (knows type 42)
 import gguf.quants as gq  # noqa: E402
@@ -38,16 +39,20 @@ def dequant_q2_0(raw: np.ndarray) -> np.ndarray:
 
 
 class Model:
-    """Every tensor of a split GGUF, by name."""
+    """Every tensor of a split GGUF, by name: the shards named like `first_shard` (-00001-of-0000N), or exactly
+    `first_shard` plus `others` when given (the engine's --ple-gguf)."""
 
-    def __init__(self, first_shard: str | Path):
+    def __init__(self, first_shard: str | Path, others=None):
         first = Path(first_shard)
         m = SHARD.search(first.name)
-        paths = [first] if not m else [
-            first.with_name(first.name[:m.start()] + "-%05d-of-%05d.gguf" % (i, int(m.group(2))))
-            for i in range(1, int(m.group(2)) + 1)]
+        if others:
+            files = [first] + [p for p in map(Path, others) if p != first]
+        else:
+            files = [first] if not m else [
+                first.with_name(first.name[:m.start()] + "-%05d-of-%05d.gguf" % (i, int(m.group(2))))
+                for i in range(1, int(m.group(2)) + 1)]
         self.files, self.maps, self.index = [], [], {}
-        for p in paths:
+        for p in files:
             g = GGUFFile(p)
             fh = open(p, "rb")
             mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)

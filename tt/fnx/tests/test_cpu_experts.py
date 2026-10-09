@@ -18,13 +18,14 @@ import sys
 
 import numpy as np
 
+from fnx import paths
 from fnx.cpu_experts import CpuExperts
 from fnx.gguf_load import STRATA_TOOLS, Model, dequant_q2_0
 
 sys.path.insert(0, str(STRATA_TOOLS))
 from gguf_writer import quantize_q2_0  # noqa: E402
 
-GGUF = "/var/tmp/strata-tt/models/coder/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
+GGUF = str(paths.SHARD1)
 H, FF, TOL = 2560, 640, 3e-2
 fails = 0
 

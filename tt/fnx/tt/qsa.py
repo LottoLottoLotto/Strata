@@ -64,13 +64,14 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..config import COMPRESS, EPS, HEAD_DIM, IDX_DIM, IDX_HEADS, N_EMBD, N_HEAD, N_HEAD_KV, ROPE_DIM
 from ..ref.qsa import DENSE_MAX_POS, GROUP, SEL_WIDTH, block_scores, rms, rope64, rope_cos_sin
 from .head import create_matmul_1d_decode_progcfg
 
 SIGMOID = ttnn.UnaryWithParam(ttnn.UnaryOpType.SIGMOID)
 ROPE2 = True
-CACHE = os.environ.get("FNX_TT_CACHE", "/var/tmp/strata-tt/cache/tt")
+CACHE = str(paths.TT_CACHE)
 QD = N_HEAD * HEAD_DIM            # 6144
 KD = N_HEAD_KV * HEAD_DIM         # 512
 MASKED = -1e9

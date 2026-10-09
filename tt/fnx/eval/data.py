@@ -2,7 +2,7 @@
 
     NODEV=1 tools/devrun.sh evaldata -m fnx.eval.data        (the TT image: pyarrow for the ultrachat parquet)
 
-Writes FNX_EVAL (default /var/tmp/strata-tt/eval)/:
+Writes FNX_EVAL (fnx.paths.EVAL, default FNX_DATA/eval)/:
   evalset.jsonl    one record per sequence: id, corpus, source, token_ids, score = [[a, b), ..] token ranges whose
                    tokens are scored as TARGETS (position i-1's logits predict token i; a >= 1)
   gsm8k.jsonl      idx, question, gold, prompt_ids (user turn + the template's generation prompt, thinking off)
@@ -10,7 +10,8 @@ Writes FNX_EVAL (default /var/tmp/strata-tt/eval)/:
 
 Disjoint from the expert-quantization calibration (ExpertQuant: ultrachat train_sft, site-packages modules, dolly-15k,
 wikitext-103 train): chat = ultrachat_200k TEST_sft, code = CPython 3.14 stdlib + llama.cpp ggml C/C++ + llama.cpp
-web UI TypeScript + Strata CUDA, instruct = alpaca-cleaned, book = Newton's Opticks (Project Gutenberg), GSM8K test.
+web UI TypeScript + Strata CUDA (corpus/qsa_select.cu: Strata 82f46a8's file, pinned so the set stays the one gated),
+instruct = alpaca-cleaned, book = Newton's Opticks (Project Gutenberg), GSM8K test.
 
 Framing: chats and instructions are rendered with the Coder's own chat template (the pack's chat_template.jinja,
 rendered like Strata's serve/frontend.py) with enable_thinking=False, so every assistant turn reads
@@ -23,13 +24,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
-EVAL = Path(os.environ.get("FNX_EVAL", "/var/tmp/strata-tt/eval"))
-PACK_TOK = Path("/var/tmp/strata-tt/packs/coder-iq1_m/tokenizer")
-STRATA_TOOLS = Path(os.environ.get("STRATA_TOOLS", "/var/tmp/strata-tt/Strata/tools"))
+from .. import paths
+
+EVAL = paths.EVAL
+PACK_TOK = paths.PACK / "tokenizer"
+STRATA_TOOLS = paths.STRATA_TOOLS
 HF = Path("/home/lotto/.cache/huggingface/hub")
 ULTRACHAT = HF / "datasets--HuggingFaceH4--ultrachat_200k/snapshots/8049631c405ae6576f93f445c6b8166f76f5505a"
 ALPACA = HF / "datasets--yahma--alpaca-cleaned/snapshots/12567cabf869d7c92e573c7c783905fc160e9639"
@@ -42,10 +44,10 @@ CODE = [  # (path, language); a 1024-token window from the first line break afte
     ("/usr/lib/python3.14/difflib.py", "python"),
     ("/usr/lib/python3.14/statistics.py", "python"),
     ("/usr/lib/python3.14/calendar.py", "python"),
-    ("/var/tmp/strata-tt/third_party/llama.cpp/ggml/src/ggml-alloc.c", "c"),
-    ("/var/tmp/strata-tt/third_party/llama.cpp/ggml/src/ggml-backend.cpp", "c++"),
+    (str(paths.LLAMA_CPP / "ggml/src/ggml-alloc.c"), "c"),
+    (str(paths.LLAMA_CPP / "ggml/src/ggml-backend.cpp"), "c++"),
     ("/home/lotto/llama.cpp/tools/ui/src/lib/utils/contenteditable-tokenizer.ts", "typescript"),
-    ("/var/tmp/strata-tt/Strata/src/kernels/cuda/qsa_select.cu", "cuda"),
+    (str(Path(__file__).resolve().parent / "corpus" / "qsa_select.cu"), "cuda"),
 ]
 CODE_LEN = 1024
 N_CHAT, CHAT_MAX = 6, 1536

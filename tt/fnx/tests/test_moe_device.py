@@ -6,7 +6,7 @@ device, no host round trip) on real layers against the numpy references.
 
 --store rtn:N   round-to-nearest of the GGUF dequantized experts, the layer's N hottest experts (Strata's Coder
                 profile) bfp4, the rest bfp2 (rtn:256 = all bfp4, rtn:0 = all bfp2); tiles cached under
-                /var/tmp/strata-tt/dmoe/rtn (converted in --workers processes before the device opens)
+                FNX_DATA/dmoe/rtn (FNX_DMOE_RTN; converted in --workers processes before the device opens)
 --store quant:NAME   ExpertQuant's GPTQ plan NAME (fnx.quant.store.Plan)
 --inputs        real MoE inputs (npz with mixed_L<L> [n, 2560] f32 rows); default: realistic FFN-half rows (token
                 embeddings as a 4-stream residual read through hc_ffn, as test_moe)
@@ -44,6 +44,7 @@ from pathlib import Path
 
 import numpy as np
 
+from fnx import paths
 from fnx.config import N_EMBD, N_EXPERT, N_FF
 from fnx.ref import moe as M
 from fnx.ref.hc import hc_read, hc_weights
@@ -54,7 +55,7 @@ ROUTE_MARGIN = 2e-3          # exact 10th-11th logit gap below which a flip is a
 KERNEL_TOL = 5e-3
 WT_TOL = 2e-5
 HEADROOM_GB = 1.5            # free device DRAM required after TtModel(32K) + MTP + every layer's expert store
-RTN_DIR = Path(os.environ.get("FNX_DMOE_RTN", "/var/tmp/strata-tt/dmoe/rtn"))
+RTN_DIR = Path(os.environ.get("FNX_DMOE_RTN") or paths.DATA / "dmoe" / "rtn")
 
 
 def parse_layers(s: str) -> list[int]:
@@ -161,7 +162,7 @@ def capture_inputs(path: str, every: int = 4, chunk: int = 32) -> None:
     try:
         model = TtModel(mesh, w, CpuExperts(w.model, N_LAYERS, 16), max_ctx=4096, verbose=False)
         for name in ("chat", "code", "doc"):
-            toks = [int(t) for t in Path(f"/var/tmp/strata-tt/golden/prompts/{name}.ids").read_text().split(",") if t]
+            toks = [int(t) for t in (paths.GOLDEN / "prompts" / f"{name}.ids").read_text().split(",") if t]
             state["name"] = name
             model.reset()
             t0 = time.time()
@@ -258,7 +259,7 @@ def full_model(plan_name: str, prompt: str = "chat") -> bool:
               f"allocated {m.total_bytes_allocated_per_bank * m.num_banks / 1e9:.3f} GB, free {free:.3f} GB (largest "
               f"contiguous {m.largest_contiguous_bytes_free_per_bank / 1e9:.3f} GB/bank) {'OK' if fit else 'FAIL'} "
               f"(>= {HEADROOM_GB} GB headroom)", flush=True)
-        toks = [int(t) for t in Path(f"/var/tmp/strata-tt/golden/prompts/{prompt}.ids").read_text().split(",") if t]
+        toks = [int(t) for t in (paths.GOLDEN / "prompts" / f"{prompt}.ids").read_text().split(",") if t]
         model.reset()
         model.forward(toks[:-1], head=False)
         out, tok = [], toks[-1]

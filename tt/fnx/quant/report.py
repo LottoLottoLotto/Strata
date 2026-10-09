@@ -1,21 +1,20 @@
 """Summaries of the quantization run: per-layer proxy-error table (RTN vs GPTQ x BFP4 vs BFP2), usage-weighted, and
 a flat per-expert CSV.
 
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.report
+    python -m fnx.quant.report                                       (host venv, cwd tt/)
 Writes FNX_QUANT_DIR/report/{proxy_layers.md, proxy_layers.json, proxy_experts.csv}.
 """
 from __future__ import annotations
 
 import json
-import os
 import sys
-from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from ..config import N_EXPERT, N_LAYERS
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 VARS = ("rtn4", "gptq4", "rtn2", "gptq2")
 MATS = ("gate", "up", "down")
 

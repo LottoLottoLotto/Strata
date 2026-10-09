@@ -1,6 +1,6 @@
 """Calibration corpus for the routed-expert GPTQ: 128 calibration + 16 held-out sequences of 2048 Coder tokens.
 
-Disjoint from the quality gate's eval set (fnx.eval.data, /var/tmp/strata-tt/eval/provenance.json): no ultrachat
+Disjoint from the quality gate's eval set (fnx.eval.data, FNX_DATA/eval/provenance.json): no ultrachat
 test split, no CPython stdlib, no llama.cpp / Strata sources, no alpaca, no Opticks, no GSM8K. Same framing as the eval
 (chat template with enable_thinking=False; code and docs as raw text). Balanced mix (ttquant lesson: an all-chat
 calibration made code worse than RTN), weighted toward code for the Coder:
@@ -12,21 +12,21 @@ calibration made code worse than RTN), weighted toward code for the Coder:
     instruct     16      2     databricks-dolly-15k single-turn chats (instruction [+ context] -> response) packed
     docs         16      2     markdown documentation (sglang, vllm, hermes-agent, localmaxxing) packed raw
 
-Output: /var/tmp/strata-tt/quant/calib/seqs.json {"calib": [{"id", "corpus", "source", "token_ids"}], "heldout": [...],
+Output: FNX_QUANT_DIR/calib/seqs.json {"calib": [{"id", "corpus", "source", "token_ids"}], "heldout": [...],
 "provenance": {...}}.  Deterministic (seed 0).  Run with the venv python (pyarrow, jinja2).
 """
 from __future__ import annotations
 
 import json
-import os
 import random
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from fnx import paths  # noqa: E402
 from fnx.eval.data import Builder, ULTRACHAT, sha256  # noqa: E402
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 SEQ = 2048
 HOME = Path("/home/lotto")
 DOLLY = HOME / ".cache/huggingface/hub/datasets--databricks--databricks-dolly-15k/snapshots/" \

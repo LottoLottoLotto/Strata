@@ -1,7 +1,7 @@
 """End-to-end effect of quantized routed experts on the held-out calibration sequences (16 x 2048 tokens, disjoint
 from the eval set), float32 torch forward (fnx.eval.torchref.Ref), against the same forward with float experts.
 
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.evalq CONFIG [CONFIG ...]
+    python -m fnx.quant.evalq CONFIG [CONFIG ...]                    (host venv, cwd tt/)
 CONFIG:
   plan:<name>          a store plan (fnx.quant.store.Plan): every routed expert from its snapped pool rows
   rtn4:<L0>-<L1>       tt-metal RTN bfp4 of every expert in layers L0..L1 (float elsewhere): layer-group sensitivity
@@ -13,21 +13,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 
+from .. import paths
 from ..config import N_LAYERS
 from ..eval.torchref import DEV, ExpertLoader, Ref, setup_torch
 from . import bfp, calib_data, methods
 from .pipeline import shm_hygiene
 from .store import FMT, SHAPE, Plan, Pool
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 
 
 def pool_experts(pool: Pool, L: int, fmt_of: np.ndarray, ex: dict) -> dict:

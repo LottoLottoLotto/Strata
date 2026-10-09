@@ -42,10 +42,11 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..ref.hc import D, EPS, HC, LR, N, hc_weights
 
 F32, BF16 = ttnn.float32, ttnn.bfloat16
-TT_CACHE = os.environ.get("FNX_TT_CACHE", "/var/tmp/strata-tt/cache/tt")
+TT_CACHE = str(paths.TT_CACHE)
 HIFI4 = ttnn.WormholeComputeKernelConfig(math_fidelity=ttnn.MathFidelity.HiFi4, fp32_dest_acc_en=True,
                                          packer_l1_acc=True)
 DRAM = ttnn.DRAM_MEMORY_CONFIG
@@ -56,7 +57,7 @@ _DT_NAME = {F32: "f32", BF16: "bf16", ttnn.bfloat8_b: "bfp8", ttnn.bfloat4_b: "b
 
 
 def upload(mesh, name: str, arr: np.ndarray, dtype, layout=ttnn.TILE_LAYOUT):
-    """Weight upload through the converted-tensor cache (FNX_TT_CACHE/<name>_<dtype>)."""
+    """Weight upload through the converted-tensor cache (fnx.paths.TT_CACHE/<name>_<dtype>)."""
     os.makedirs(TT_CACHE, exist_ok=True)
     a = np.ascontiguousarray(np.asarray(arr, np.float32))
     while a.ndim < 4:

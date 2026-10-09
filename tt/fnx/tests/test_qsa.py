@@ -33,6 +33,7 @@ import time
 
 import numpy as np
 
+from fnx import paths
 from fnx.config import HC, HEAD_DIM, N_EMBD, N_HEAD
 from fnx.ref.qsa import DENSE_MAX_POS, SEL_WIDTH, QsaState, block_scores, qsa, rms, rope64, rope_cos_sin
 from fnx.weights import Weights
@@ -45,7 +46,7 @@ REL_TOL_BF8 = 1e-2
 LAYERS = (3, 7)
 N_TOK = 64
 SCHEDULE = [(p, 1) for p in range(40)] + [(40, 8), (48, 5)] + [(p, 1) for p in range(53, 64)]
-REF_DIR = os.environ.get("FNX_QSA_REF", "/var/tmp/strata-tt/cache/qsa_ref")
+REF_DIR = os.environ.get("FNX_QSA_REF") or str(paths.CACHE / "qsa_ref")
 
 
 def embed_rows(w: Weights, tokens) -> np.ndarray:

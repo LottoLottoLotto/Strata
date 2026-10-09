@@ -55,9 +55,10 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..config import N_EMBD, N_EXPERT, N_FF, N_LAYERS, N_USED
 
-TT_CACHE = os.environ.get("FNX_TT_CACHE", "/var/tmp/strata-tt/cache/tt")
+TT_CACHE = str(paths.TT_CACHE)
 ROUTER_COLS = N_EXPERT + 32        # 256 router logits, column 256 = shared-expert gate, 31 zero columns
 PRODUCT_ERR = 2.0 ** -11           # device logit error bound per unit of ||x|| ||W_e|| (module docstring)
 

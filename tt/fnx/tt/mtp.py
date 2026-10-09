@@ -51,6 +51,7 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..config import EPS, HC, HC_DIM, HEAD_DIM, N_EMBD, N_HEAD, N_HEAD_KV, ROPE_DIM
 from ..quant import bfp as qbfp
 from ..ref.embed import embed
@@ -67,7 +68,7 @@ f32 = np.float32
 F32, BF16, BFP8 = ttnn.float32, ttnn.bfloat16, ttnn.bfloat8_b
 DRAM = ttnn.DRAM_MEMORY_CONFIG
 RM, TILE = ttnn.ROW_MAJOR_LAYOUT, ttnn.TILE_LAYOUT
-TT_CACHE = os.environ.get("FNX_TT_CACHE", "/var/tmp/strata-tt/cache/tt")
+TT_CACHE = str(paths.TT_CACHE)
 HIFI4 = ttnn.WormholeComputeKernelConfig(math_fidelity=ttnn.MathFidelity.HiFi4, math_approx_mode=False,
                                          fp32_dest_acc_en=True, packer_l1_acc=True)
 NORM_CKC = ttnn.WormholeComputeKernelConfig(math_fidelity=ttnn.MathFidelity.HiFi4, math_approx_mode=False,
@@ -258,9 +259,10 @@ def env_resident() -> int:
     return int(os.environ.get("FNX_MTP_RESIDENT", DEFAULT_RESIDENT))
 
 
-def reserve_items(resident: int | None = None) -> int:
-    """TtModel(host_reserve=...) for the drafter (resident: default env_resident()): host_items of its vocabulary."""
-    return host_items(env_resident() if resident is None else resident, len(MtpWeights().vocab))
+def reserve_items(resident: int | None = None, mw: MtpWeights | None = None) -> int:
+    """TtModel(host_reserve=...) for the drafter (resident: default env_resident(); mw: its weights, default
+    MtpWeights()): host_items of its vocabulary."""
+    return host_items(env_resident() if resident is None else resident, len((mw or MtpWeights()).vocab))
 
 
 def host_items(resident: int, n_vocab: int, item_bytes: int = ITEM_BYTES) -> int:

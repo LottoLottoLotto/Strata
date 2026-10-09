@@ -17,10 +17,11 @@ from pathlib import Path
 
 import numpy as np
 
+from fnx import paths
 from fnx.ref.hc import HC, N, hc_read, hc_weights, hc_write
 
-INPUTS = Path(os.environ.get("FNX_HCPLE_INPUTS", "/var/tmp/strata-tt/cache/hcple"))
-PROMPT = Path("/var/tmp/strata-tt/golden/prompts/code.ids")
+INPUTS = Path(os.environ.get("FNX_HCPLE_INPUTS") or paths.CACHE / "hcple")
+PROMPT = paths.GOLDEN / "prompts" / "code.ids"
 READS = ["blk.0.hc_attn", "blk.0.hc_ffn", "blk.1.hc_attn", "blk.1.hc_ffn", "blk.3.hc_attn", "blk.3.hc_ffn", "output_hc"]
 # Pass thresholds for the default (precise) path. The floor is the FPU's fp32 accumulation (~3e-4 relative on a
 # 10240-deep signed projection, see fnx/tt/hc.py); a wrong stream / sign / scale shows up as >= 1e-2.

@@ -26,11 +26,12 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from fnx import paths  # noqa: E402
 from fnx.quant import bfp, methods  # noqa: E402
 
-TT = Path(os.environ.get("TT_METAL_HOME", "/home/container_app_user/tt-metal"))
+TT = Path(os.environ.get("TT_METAL_HOME", paths.TT_METAL))
 SHIM_SRC = Path(__file__).resolve().parents[1] / "quant" / "ttbfp_shim.cpp"
-SHIM_SO = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant")) / "build" / "libttbfp.so"
+SHIM_SO = paths.QUANT / "build" / "libttbfp.so"
 FMT_ID = {"bfp2": 2, "bfp4": 4, "bfp8": 8}
 
 
@@ -84,7 +85,8 @@ def bit_mismatches(a: np.ndarray, b: np.ndarray) -> int:
 
 def real_cases():
     """A few real Coder expert matrices as ttnn sees them (W.T = [in, out]), across GGUF types."""
-    os.environ.setdefault("GGUF_PY", "/var/tmp/strata-tt/third_party/llama.cpp/gguf-py")
+    if not os.environ.get("GGUF_PY"):
+        paths.GGUF_PY = paths.LLAMA_CPP / "gguf-py"          # the pinned llama.cpp's gguf-py (before gguf_load)
     from fnx.gguf_load import Model
     from fnx.weights import DEFAULT_SHARD1
     m = Model(DEFAULT_SHARD1)

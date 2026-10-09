@@ -6,7 +6,7 @@
     tools/devrun.sh mtp-bench -m fnx.tests.test_mtp bench [chat ...]   # device: traced serving loop, plain vs MTP
     tools/devrun.sh mtp-prof -m fnx.tests.test_mtp profile             # device: drafter routing counts (calibration)
 
-strata: Strata's drafts come from /var/tmp/strata-tt/mtp/strata_drafts.sh (RTX 3090, gdb-traced MtpDrafter::draft on
+strata: Strata's drafts come from FNX_DATA/mtp/strata_drafts.sh (RTX 3090, gdb-traced MtpDrafter::draft on
 the golden prompts with the continuation forced to the golden serve output; inputs = Strata's own final residuals of
 every position, STRATA_PREFILL_DUMP_R_ALL, BF16).  The numpy drafter replays the same rounds: prompt K/V over cells
 [0, n_prompt-1), then per traced round the catch-up (rows 0..a) and the 3-step chain.  Reported: per-draft agreement
@@ -35,10 +35,11 @@ from pathlib import Path
 
 import numpy as np
 
+from fnx import paths
 from fnx.ref import mtp as M
 
-GOLDEN = Path(os.environ.get("FNX_GOLDEN", "/var/tmp/strata-tt/golden"))
-STRATA = Path(os.environ.get("FNX_MTP_GOLDEN", "/var/tmp/strata-tt/mtp/golden"))
+GOLDEN = paths.GOLDEN
+STRATA = Path(os.environ.get("FNX_MTP_GOLDEN") or paths.MTP / "golden")
 MIN_D0_AGREE, MAX_ACC_DIFF = 0.90, 0.10
 
 
@@ -374,7 +375,7 @@ def bench(names, gen: int = BENCH_GEN, ctx: int = BENCH_CTX, chunk: int = BENCH_
     return ok
 
 
-CALIB = Path("/var/tmp/strata-tt/quant/calib/seqs.json")      # fnx.quant.calib_data's calibration corpus
+CALIB = paths.QUANT / "calib" / "seqs.json"      # fnx.quant.calib_data's calibration corpus
 PROFILE_SEQS = {"chat": 3, "code": 3, "instruct": 1, "docs": 1}     # calibration sequences per corpus
 PROFILE_LEN, PROFILE_CHUNK = 1024, 128
 

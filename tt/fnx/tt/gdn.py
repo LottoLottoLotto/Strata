@@ -63,11 +63,12 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..ref.gdn import CONV_CH, DK, HK, HV, N, QK, VALUE_DIM, gdn_weights
 from .packed_matmul import PackedLayout, PackedMatmul, place_packed
 
 EPS = 1e-6
-CACHE = Path(os.environ.get("FNX_TT_CACHE", "/var/tmp/strata-tt/cache/tt"))
+CACHE = paths.TT_CACHE
 DRAM = ttnn.DRAM_MEMORY_CONFIG
 L1 = ttnn.L1_MEMORY_CONFIG
 F32, BF16, BFP8 = ttnn.float32, ttnn.bfloat16, ttnn.bfloat8_b
@@ -94,7 +95,7 @@ def _dtype_name(dtype) -> str:
 
 
 def _cached(mesh, name: str, dtype, make):
-    """Weight as a DRAM TILE tensor, converted once and cached under FNX_TT_CACHE (`make()` runs only on a miss)."""
+    """Weight as a DRAM TILE tensor, converted once and cached under fnx.paths.TT_CACHE (`make()` on a miss only)."""
     base = CACHE / f"{name}_{_dtype_name(dtype)}"
     hit = any(base.parent.glob(base.name + "_dtype_*.tensorbin"))
     return ttnn.as_tensor(None if hit else make(), dtype=dtype, layout=ttnn.TILE_LAYOUT, device=mesh,

@@ -1,8 +1,8 @@
 """GPTQ-BFP4 LM head (output.weight, Q6_K in the GGUF) on the RTX 3090 (torch, float32).
 
-    cd /var/tmp/strata-tt/flashnext_tt
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.head capture [--every 2] [--batch 8]
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.head quantize [--methods bfp8,rtn4,search4,gptq4] [--damp 0.01]
+    cd tt          (the repository's tt/; the host venv's python)
+    python -m fnx.quant.head capture [--every 2] [--batch 8]
+    python -m fnx.quant.head quantize [--methods bfp8,rtn4,search4,gptq4] [--damp 0.01]
 
 capture: fnx.quant.pipeline.Stream (fnx.eval.torchref's float32 port of the published Coder GGUF, layer-major) over
 every `--every`-th calibration sequence of fnx.quant.calib_data (disjoint from the quality gate's eval set; every 2nd
@@ -34,10 +34,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .. import paths
 from ..config import N_EMBD, N_LAYERS, N_VOCAB
 from . import bfp, methods
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 HEAD_DIR = QDIR / "head"
 STORE = QDIR / "store" / "head"
 FMT = {"bfp8": "bfp8", "rtn4": "bfp4", "search4": "bfp4", "gptq4": "bfp4"}

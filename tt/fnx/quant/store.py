@@ -1,6 +1,6 @@
 """Quantized routed-expert store: one pool of GPTQ-BFP rows shared by every precision plan.
 
-Layout under FNX_QUANT_DIR/store (default /var/tmp/strata-tt/quant/store):
+Layout under fnx.paths.STORE (FNX_QUANT_DIR/store, default FNX_DATA/quant/store):
   pool/L{LL}.b4.npy     uint8 [n4, 921600]  bfp4 matrices (fnx.quant.bfp store rows of W.T = [in, out])
   pool/L{LL}.b4idx.npy  int32 [n4, 2]       (expert, matrix) of each row; matrix 0 gate, 1 up, 2 down
   pool/L{LL}.b2.npy     uint8 [n2, 512000]  bfp2 matrices;  pool/L{LL}.b2idx.npy likewise
@@ -15,14 +15,14 @@ down: in 640, out 2560. tiles() gives tt-metal's TILE byte stream of W.T (576 B 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from . import bfp
 
-STORE = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant")) / "store"
+STORE = paths.STORE
 MATS = ("gate", "up", "down")
 SHAPE = {0: (2560, 640), 1: (2560, 640), 2: (640, 2560)}       # W.T [in, out]
 FMT = {4: "bfp4", 2: "bfp2"}

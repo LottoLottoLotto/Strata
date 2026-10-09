@@ -14,20 +14,20 @@ Per-layer residual ladder for bisection: `forward(..., dump=d)` fills `d` with
   R_ple  [T, 4, 2560]              R after the PLE block (before layer 1's attention read)
   bo_mix, bo_moe [n_layers, T, 2560]; inj_mix, inj_moe [n_layers, T, 4]; head_in [T, 2560]
 
-Golden comparison (tools/golden.sh writes /var/tmp/strata-tt/golden/<name>/): `read_logpos` parses Strata's
+Golden comparison (tools/golden.sh writes fnx.paths.GOLDEN/<name>/): `read_logpos` parses Strata's
 STRATA_LOGPOS TSV, `LogposScore` scores logits against it (argmax agreement, top-k overlap, KL over Strata's top-K
 plus a rest bucket, target NLL).  CLI: `python -m fnx.ref.model golden NAME [--max-pos N]`.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from ..config import HC, N_EMBD, N_LAYERS, N_VOCAB, PLE_LAYER, is_qsa
 from .embed import embed, head
 from .gdn import GdnState, gdn
@@ -36,7 +36,7 @@ from .moe import moe
 from .ple import PleState, PleTable, ple_block
 from .qsa import QsaState, qsa
 
-GOLDEN = Path(os.environ.get("FNX_GOLDEN", "/var/tmp/strata-tt/golden"))
+GOLDEN = paths.GOLDEN
 
 
 def hc_weights(w, prefix: str, inject: bool = True):

@@ -1,8 +1,8 @@
 """Streaming calibration + GPTQ-BFP quantization of every routed expert (RTX 3090, torch, float32).
 
-    cd /var/tmp/strata-tt/flashnext_tt
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.pipeline capture --layers 2,11       # activation dumps only
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.pipeline quantize [--weighted 0|1] [--n-min 2560]
+    cd tt          (the repository's tt/; the host venv's python)
+    python -m fnx.quant.pipeline capture --layers 2,11       # activation dumps only
+    python -m fnx.quant.pipeline quantize [--weighted 0|1] [--n-min 2560]
 
 The forward is fnx.eval.torchref's float32 port of the published Coder GGUF (dequantized weights everywhere, float
 routed experts), driven layer-major over the calibration corpus (fnx.quant.calib_data: 128 calibration + 16 held-out
@@ -19,7 +19,7 @@ each expert's own space, so only its own diagonal is a prior); fnx.quant.experim
 Quantization per layer, batched over experts: RTN (tt-metal's own conversion) and GPTQ-BFP (act-order, 1% damping,
 min-MSE block exponent with clips -1..2 (bfp4) / -1..3 (bfp2)) for bfp4 and bfp2; gate and up share Hgu.
 
-Outputs under FNX_QUANT_DIR (/var/tmp/strata-tt/quant):
+Outputs under FNX_QUANT_DIR (fnx.paths.QUANT, default FNX_DATA/quant):
   stats/L{LL}.npz    n, w2, f2 (sum w^2 ||f||^2) per expert; Hgu/Hd diagonals; Pgu; residual/MoE scale statistics
   proxy/L{LL}.npz    per expert, method (rtn, gptq) x format (bfp4, bfp2):
                        rel_h_{gate,up,down}_{m}{f}: in-sample tr(dW H dW^T)/tr(W H W^T)
@@ -45,11 +45,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .. import paths
 from ..config import HC, N_EMBD, N_EXPERT, N_FF, N_LAYERS, N_USED, PLE_LAYER, is_qsa
 from ..eval.torchref import DEV, ExpertLoader, Ref, hc_read, hc_write, setup_torch, silu
 from . import bfp, calib_data, methods
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 FMTS = ("bfp4", "bfp2")
 COMBOS = ("444", "442", "424", "422", "244", "242", "224", "222")
 N_POOL_ROWS = 512

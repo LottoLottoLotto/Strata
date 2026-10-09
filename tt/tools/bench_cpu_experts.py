@@ -4,11 +4,12 @@ import time
 
 import numpy as np
 
+from fnx import paths
 from fnx.cpu_experts import CpuExperts
 from fnx.gguf_load import Model
 
 threads = [int(t) for t in (sys.argv[1] if len(sys.argv) > 1 else "8,16").split(",")]
-m = Model("/var/tmp/strata-tt/models/coder/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf")
+m = Model(paths.SHARD1)
 rng = np.random.default_rng(1)
 for nth in threads:
     cx = CpuExperts(m, 48, nth)

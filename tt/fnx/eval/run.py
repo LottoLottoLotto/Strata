@@ -3,8 +3,8 @@
     tools/devrun.sh eval-cpu  -m fnx.eval.run --config cpu  [--max-minutes 10] [--corpus chat,code] [--records ..]
                                                             [--gsm 50] [--no-tf] [--env KEY=VAL ..]
     tools/devrun.sh eval-bfp8 -m fnx.eval.run --config bfp8 --gsm 50       (repeat until "nothing to run")
-    /var/tmp/strata-tt/venv/bin/python -m fnx.eval.run --report cpu,bfp8     (host, no device: the stored results,
-                                                                            plus the reference's own noise floor)
+    python -m fnx.eval.run --report cpu,bfp8        (host venv, cwd tt/, no device: the stored results, plus the
+                                                    reference's own noise floor)
 
 Configurations (environment set before TtModel is built; --env KEY=VAL adds or overrides, and a new NAME with --env
 defines a new configuration, e.g. a device-expert build):
@@ -38,12 +38,13 @@ from pathlib import Path
 
 import numpy as np
 
+from .. import paths
 from . import data, score
 
 CONFIGS = {
     "cpu": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": ""},
     "device-gptq": {"FNX_MOE": "device", "FNX_MOE_PLAN": "bfp4-tiered-2.2e+10"},
-    "bfp8": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": "/var/tmp/strata-tt/cache/placement/coder-bfloat8_b-4555.json"},
+    "bfp8": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": str(paths.CACHE / "placement" / "coder-bfloat8_b-4555.json")},
 }
 RUNS = data.EVAL / "runs"
 CHUNK = 128

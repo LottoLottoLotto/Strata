@@ -1,11 +1,12 @@
 """GSM8K reference answers from Strata's own CUDA engine on the RTX 3090 (the published model as Strata serves it).
 
-    cd /var/tmp/strata-tt/flashnext_tt && /var/tmp/strata-tt/venv/bin/python -m fnx.eval.strata_ref [--n 100]
+    cd tt && $FNX_DATA/venv/bin/python -m fnx.eval.strata_ref [--n 100]      (dev host: Strata's venv)
 
 Strata's production arguments for the Coder (setup.py: expert profile + VRAM expert cache auto, MTP drafts,
 --spec 4 --spec-min-p 0.5) in --serve mode, --prompt-cache 0, greedy (Strata's default), max 512 new tokens, stop at
 EOS; one GEN per prompt of FNX_EVAL/gsm8k.jsonl.  Writes FNX_EVAL/gsm8k-strata.jsonl (same fields as fnx.eval.run's
-gsm8k.jsonl) and the exact command line to gsm8k-strata.cmd.  Needs the 3090 to itself (no other GPU job).
+gsm8k.jsonl) and the exact command line to gsm8k-strata.cmd.  Needs the 3090 to itself (no other GPU job).  The
+engine is the dev host's CUDA build of the pinned reference checkout (fnx.paths.STRATA_REF, FNX_DATA/build-cuda).
 """
 from __future__ import annotations
 
@@ -16,14 +17,14 @@ import subprocess
 import sys
 import time
 
+from .. import paths
 from . import data
 
-W = "/var/tmp/strata-tt"
-S1 = f"{W}/models/coder/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
-S2 = f"{W}/models/coder/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf"
-ARGV = [f"{W}/build-cuda/strata", "--serve", "--pack", f"{W}/packs/coder-iq1_m", "--native", S1, "--ple-gguf", S2,
-        "--expert-profile", f"{W}/Strata/data/expert-profile-coder.bin", "--expert-cache", "auto",
-        "--prefill", "auto", "--spec", "4", "--spec-min-p", "0.5", "--mtp", f"{W}/mtp/rt",
+W = str(paths.DATA)
+S1, S2 = str(paths.SHARD1), str(paths.SHARD2)
+ARGV = [f"{W}/build-cuda/strata", "--serve", "--pack", str(paths.PACK), "--native", S1, "--ple-gguf", S2,
+        "--expert-profile", str(paths.STRATA_REF / "data" / "expert-profile-coder.bin"), "--expert-cache", "auto",
+        "--prefill", "auto", "--spec", "4", "--spec-min-p", "0.5", "--mtp", str(paths.MTP_RT),
         "--max-context", "4096", "--prompt-cache", "0"]
 EOS = (248044, 248046)
 

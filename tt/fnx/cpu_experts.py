@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import ctypes as C
 import os
-from pathlib import Path
 
 import numpy as np
+
+from . import paths
 
 _LIB = None
 
@@ -16,8 +17,10 @@ def lib(path: str | None = None):
         # #152: multi-token kernels for every group, so a token's expert rows do not depend on how many tokens share
         # the expert in a call (the kernels read it once, at their first call)
         os.environ.setdefault("STRATA_IQ_MT_MIN", "1")
-        # built in the TT image (glibc 2.35), so it loads there and on this newer host alike
-        p = path or os.environ.get("FNX_CPU_LIB") or str(Path(__file__).resolve().parent.parent / "cpu_experts" / "build-tt" / "libfnx_cpu.so")
+        # built in the TT image (glibc 2.35) by tt/cpu_experts/build.sh, so it loads there and on a newer host alike
+        p = str(path or paths.CPU_LIB)
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"{p}: Strata's CPU expert kernels are not built (tt/cpu_experts/build.sh)")
         L = C.CDLL(p)
         L.fnx_init.argtypes = [C.c_int, C.c_int, C.c_char_p, C.c_int]
         L.fnx_set_layer.argtypes = [C.c_int, C.c_int, C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p,

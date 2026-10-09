@@ -7,25 +7,24 @@
      raw H_n, on H_n + (n_min - n) * prior (gate/up prior: the layer's pooled per-token x x^T; down prior: H_n's own
      diagonal / n), per-block exponent search (no data), RTN; scored on the expert's held-out rows.
 
-    /var/tmp/strata-tt/venv/bin/python -m fnx.quant.experiments --layers 2,11
+    python -m fnx.quant.experiments --layers 2,11                    (host venv, cwd tt/)
 Writes FNX_QUANT_DIR/experiments.json (--only B2: experiments-B2.json, prior-strength sweep).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import torch
 
+from .. import paths
 from ..config import N_EXPERT, N_FF, N_USED
 from ..eval.torchref import DEV, setup_torch, silu
 from . import methods
 
-QDIR = Path(os.environ.get("FNX_QUANT_DIR", "/var/tmp/strata-tt/quant"))
+QDIR = paths.QUANT
 
 
 def ffn(Wg, Wu, Wd, x):

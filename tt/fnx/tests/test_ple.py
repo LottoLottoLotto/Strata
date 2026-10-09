@@ -9,14 +9,14 @@ from __future__ import annotations
 import re
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
+from fnx import paths
 from fnx.ref import ple as P
 from fnx.ref.hc import HC, N, D
 
-ORACLE = Path("/var/tmp/strata-tt/Strata/src/kernels/ple_oracle_vectors.inc")
+ORACLE = paths.PLE_ORACLE
 # device pass thresholds on the PLE update (R_new - R) and the history; floor = FPU fp32 accumulation, ~3e-4
 TOL = {"upd_rel": 1e-3, "upd_max": 5e-3, "hist_rel": 1e-3}
 
