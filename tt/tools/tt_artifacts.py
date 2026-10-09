@@ -19,7 +19,8 @@ dev machine), the opt-in plans (h2 BFP2 rows, the gptq4 LM head), the calibratio
     python3 tt/tools/tt_artifacts.py verify --remote                                  published files vs the manifest
     venv/bin/python tt/tools/tt_artifacts.py manifest [--data DIR]                    sha256 + size -> artifacts.json
     venv/bin/python tt/tools/tt_artifacts.py publish  [--data DIR]                    upload + card, pins the revision
-    venv/bin/python tt/tools/tt_artifacts.py regenerate --data DIR --mtp DIR [...]    rebuild from the GGUF (CUDA GPU)
+    venv/bin/python tt/tools/tt_artifacts.py regenerate --data DIR --gguf SHARD1 --mtp RT   rebuild (CUDA GPU; see
+                                                                                           cmd_regenerate)
 
 fetch / verify use only the standard library (setup's interpreter); manifest needs numpy, publish huggingface_hub,
 regenerate the fnx venv (torch with CUDA).  HF_ENDPOINT selects a mirror as in setup.py's hf_endpoint().  Verified
@@ -619,18 +620,37 @@ def cmd_publish(a) -> int:
 
 # ------------------------------------------------------------------------------------------------------ regenerate
 def cmd_regenerate(a) -> int:
-    """GPTQ-BFP4 store + plan + MTP BFP4 experts from the GGUF, written into DATA in the manifest's layout."""
-    data = a.data.resolve()
+    """The GPTQ-BFP4 store, the default plan and the MTP BFP4 experts from the GGUF, into DATA in the manifest layout.
+
+    Steps (--steps, run in this order; each resumes or skips what exists):
+      calib     DATA/quant/calib/seqs.json: --calib FILE is copied, else fnx.quant.calib_data builds it (it reads the
+                dev machine's corpora: UltraChat/dolly in the HF cache and local source trees; elsewhere use --calib)
+      quantize  fnx.quant.pipeline quantize with the published settings (QUANTIZE_ARGS): an NVIDIA GPU with >= 16 GB
+                (peak 15 GB) and ~55 GB of host RAM (pinned residuals of the 144 sequences + the layer prefetch in
+                /dev/shm: 53 GB RSS seen); 62 min on an RTX 3090 for 48 layers (one layer: 2.5 min with the inputs);
+                writes DATA/quant/store/pool (34 GB of BFP4 rows, + BFP2 rows with --pool2), DATA/quant/{stats,proxy}
+                and the dequantized non-expert weights DATA/cache/dequant (FNX_CACHE; ~16 GB, the cache the engine
+                itself uses); layers already done are skipped
+      alloc     fnx.quant.alloc --tiered <DEFAULT_PLAN's budget> --write: the plan (all 48 layers needed; seconds)
+      mtp       fnx.ref.mtp.MtpWeights(--mtp RT).bfp4_rows(): DATA/mtp/experts-bfp4-search.u8 from mtp-q2_0.gguf
+                beside RT (setup's MTP runtime folder, the engine's --mtp); CPU only, 1.5 min with 8 threads
+    mtp/expert-profile.npy is a P150 measurement (fnx/tests/test_mtp.py profile through tools/devrun.sh); regenerate
+    does not rebuild it.  On the dev machine (RTX 3090, torch of the venv) layer 0's pool files and the MTP file came
+    out bitwise equal to the published ones (2026-10-08); another GPU/driver/torch may round GPTQ differently: the
+    summary line compares the result with the manifest."""
+    data = a.data.absolute()
     steps = [s.strip() for s in a.steps.split(",") if s.strip()]
-    unknown = set(steps) - {"calib", "quantize", "alloc", "mtp", "mtp-profile"}
+    unknown = set(steps) - {"calib", "quantize", "alloc", "mtp"}
     if unknown:
-        fail(f"unknown steps {sorted(unknown)} (calib, quantize, alloc, mtp, mtp-profile)")
+        fail(f"unknown steps {sorted(unknown)} (calib, quantize, alloc, mtp)")
+    if "quantize" in steps and not a.gguf:
+        fail("the quantize step needs --gguf: shard 1 of the Coder IQ1_M GGUF (shard 2 beside it)")
+    if "mtp" in steps and not a.mtp:
+        fail("the mtp step needs --mtp RT: setup's MTP runtime folder (rt/, with mtp-q2_0.gguf beside it)")
     env = {**os.environ, "FNX_DATA": str(data), "PYTHONPATH": os.pathsep.join(
         [str(TT)] + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])),
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
     env.pop("FNX_QUANT_DIR", None)                   # everything under DATA/quant (the manifest layout)
-    if a.gguf:
-        env["FNX_GGUF"] = str(Path(a.gguf).resolve())
     quant = data / "quant"
     py = sys.executable
 
@@ -642,14 +662,18 @@ def cmd_regenerate(a) -> int:
             fail(f"step failed (rc {rc}): {' '.join(str(c) for c in cmd)}", rc)
         say(f"regenerate: done in {(time.time() - t0) / 60:.1f} min")
     if "quantize" in steps:
+        gguf = Path(a.gguf).absolute()                  # as given: shard 2 is looked up beside this name
+        if not gguf.is_file():
+            fail(f"--gguf {gguf}: no such file")
+        env["FNX_GGUF"] = str(gguf)
         probe = subprocess.run([py, "-c", "import torch; p = torch.cuda.get_device_properties(0); "
                                 "print(torch.cuda.is_available() and p.total_memory >> 20, p.name)"],
                                capture_output=True, text=True, env=env)
         mib = probe.stdout.split(" ", 1)[0] if probe.returncode == 0 else ""
         if probe.returncode or not mib.isdigit() or int(mib) < 16 * 1024 - 512:
-            fail("regenerate needs an NVIDIA GPU with >= 16 GB visible to torch (CUDA) in this interpreter "
-                 f"({py}); the GPTQ pass peaks at 15 GB. " + (probe.stdout.strip() or probe.stderr.strip()[-300:]),
-                 2)
+            why = probe.stdout.strip() or (probe.stderr.strip().splitlines() or [""])[-1]
+            fail("the quantize step needs an NVIDIA GPU with >= 16 GB visible to torch (CUDA) in this interpreter "
+                 f"({py}); the GPTQ pass peaks at 15 GB ({why})", 2)
         say(f"regenerate: CUDA {probe.stdout.strip().split(' ', 1)[1]}, {int(mib) // 1024} GB")
     plan = default_plan()
     if "calib" in steps:
@@ -665,7 +689,7 @@ def cmd_regenerate(a) -> int:
             *(["--layers", a.layers] if a.layers else []))
     if "alloc" in steps:
         done = sorted(quant.glob("stats/L[0-9][0-9].npz"))
-        if a.layers or len(done) < 48:
+        if len(done) < 48:
             say(f"regenerate: alloc skipped ({len(done)}/48 layers quantized; the plan needs all of them)")
         else:
             prefix = "bfp4-tiered-"
@@ -675,26 +699,22 @@ def cmd_regenerate(a) -> int:
             if not (quant / "store" / "plans" / plan / "plan.json").is_file():
                 fail(f"fnx.quant.alloc did not write plan {plan}")
     if "mtp" in steps:
-        if not a.mtp:
-            fail("the mtp step needs --mtp DIR: setup's MTP folder (mtp-q2_0.gguf + rt/)")
-        mtp = Path(a.mtp).resolve()
-        if not (mtp / "mtp-q2_0.gguf").is_file() or not (mtp / "rt" / "dense.txt").is_file():
-            fail(f"{mtp}: no mtp-q2_0.gguf + rt/dense.txt (setup's MTP step makes them)")
+        rt = Path(a.mtp).absolute()
+        if not (rt / "dense.txt").is_file() or not (rt.parent / "mtp-q2_0.gguf").is_file():
+            fail(f"--mtp {rt}: needs rt/dense.txt and ../mtp-q2_0.gguf (setup's MTP step makes them)")
         out = data / "mtp" / "experts-bfp4-search.u8"
         if out.exists():
             say(f"regenerate: {out} exists (delete it to rebuild)")
         else:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            run(py, "-c", "import sys; from fnx.ref.mtp import MtpWeights; MtpWeights(sys.argv[1]).bfp4_rows()",
-                mtp)
-    if "mtp-profile" in steps:
-        dev = TT / "tools" / "devrun.sh"
-        env.setdefault("FNX_DEV_TIMEOUT", "1800")
-        run(dev, "mtp-profile", "fnx/tests/test_mtp.py", "profile")
+            run(py, "-c", "import sys; from fnx.ref.mtp import MtpWeights; MtpWeights(sys.argv[1]).bfp4_rows()", rt)
+            if not out.is_file():
+                fail(f"MtpWeights.bfp4_rows did not write {out}")
     man = load_manifest(a.manifest) if a.manifest.is_file() else None
     if man:
         files = [f for f in man["files"] if local(data, f["path"]).is_file()]
         bad = verify_local(data, files, 8) if files else []
+        for b in bad:
+            say("  " + b)
         say(f"regenerate: {len(files)} of {len(man['files'])} manifest files present in {data}; "
             + (f"{len(bad)} differ from the published bytes" if bad else "all equal the published bytes"))
     return 0
@@ -720,12 +740,11 @@ def main(argv=None) -> int:
     p.add_argument("--only", help="comma list of glob patterns over manifest paths")
     p.add_argument("--remote", action="store_true")
     p = common(sub.add_parser("regenerate", help="rebuild the artifacts from the GGUF (CUDA GPU)"), True)
-    p.add_argument("--gguf", help="shard 1 of the Coder IQ1_M GGUF (FNX_GGUF; default fnx.paths' shard)")
-    p.add_argument("--mtp", help="setup's MTP folder: mtp-q2_0.gguf + rt/ (the mtp step)")
+    p.add_argument("--gguf", help="shard 1 of the Coder IQ1_M GGUF, shard 2 beside it (the quantize step)")
+    p.add_argument("--mtp", help="setup's MTP runtime folder rt/ with mtp-q2_0.gguf beside it (the mtp step)")
     p.add_argument("--calib", help="calibration sequences (fnx.quant.calib_data's seqs.json) to use instead of "
                                    "building them (calib_data reads the dev machine's corpora)")
-    p.add_argument("--steps", default="calib,quantize,alloc,mtp",
-                   help="calib, quantize, alloc, mtp, mtp-profile (P150 device run through tools/devrun.sh)")
+    p.add_argument("--steps", default="calib,quantize,alloc,mtp", help="comma list of calib, quantize, alloc, mtp")
     p.add_argument("--layers", default="", help="quantize only these layers (comma list; a smoke test: no plan)")
     p.add_argument("--pool2", type=float, default=0.0,
                    help="also store BFP2 rows for this coldest fraction (0.4 = the dev store, for the opt-in h2 plans)")
