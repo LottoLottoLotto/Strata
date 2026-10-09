@@ -203,8 +203,8 @@ def lock_problem(lock: Path) -> str | None:
 
 
 def card_users(n=0) -> list[str]:
-    """Processes that have the card open right now (the driver's list)."""
-    return (_read(f"/proc/driver/tenstorrent/{n}/pids") or "").split()
+    """Processes that have the card open right now (the driver's list: one line per open file, so a pid repeats)."""
+    return list(dict.fromkeys((_read(f"/proc/driver/tenstorrent/{n}/pids") or "").split()))
 
 
 def flag(args, name):
@@ -514,6 +514,7 @@ def say_rewriter(real_ram: float, fake_ram: float, image: str):
         msg = msg.replace(f"RAM: {fake_ram:.0f} GB",
                           f"RAM: {real_ram:.0f} GB (the engine pins ~12 GB of it for the experts the card does not hold)")
         msg = msg.replace(f"engine: {stub_exe}", f"engine: {WRAPPER} (Docker image {image})")
+        msg = re.sub(r", uses ~\d+ GB of RAM", ", its experts on the card and in a ~12 GB host pool", msg)
         if re.match(r"\s+\[ok\] KV cache: ", msg):
             msg = "  [ok] KV cache: bf16 (the TT engine's)"
         if re.match(r"\s+\S+\s+needs ~\d+ GB RAM:", msg):   # --check's CUDA verdict: replaced by the P150's
@@ -672,11 +673,13 @@ def install(argv) -> None:
                 else f"{k} {v}" for k, v in keep.items()))
         cfg_path.touch()                                # the most recently used model
         browser = open_browser and cfg.get("open_browser") is not False
-        script = run_script(write, cfg_path.stem[len("strata-"):], cfg_path, port or cfg.get("port", 8080), browser)
+        # the script as the config says (its port, the browser); a --port given for this start only goes on its line
+        script = run_script(write, cfg_path.stem[len("strata-"):], cfg_path, cfg.get("port", 8080), browser)
         start_banner(cfg, lock, browser)
-        S.say(f"\nstarting {script.name} ...")
+        once = ["--port", str(port)] if port and str(port) != str(cfg.get("port", 8080)) else []
+        S.say(f"\nstarting {' '.join([script.name, *once])} ...")
         sys.stdout.flush()
-        os.execv("/bin/sh", ["/bin/sh", str(script)])
+        os.execv("/bin/sh", ["/bin/sh", str(script), *once])
     S.start = start_tt
 
     sys.argv = [str(ROOT / "setup.py"), *argv]
