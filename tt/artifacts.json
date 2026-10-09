@@ -1,0 +1,1222 @@
+{
+ "repo": "Lottolabs/Qwen3.8-Flash-Next-Coder-P150",
+ "revision": null,
+ "plan": "bfp4-tiered-2.4e+10",
+ "files": [
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/plan.json",
+   "size": 446,
+   "sha256": "bc465646f8a8a1fafcdfe59d0e745559832a9304b499d3d68bb7571ce3abd269"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L00.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L00.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L00.res.npy",
+   "size": 384,
+   "sha256": "9a9e9247d7574eacc113feb1bed831eca1b52d8f242e07e71fa77de7171a7e5a"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L01.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L01.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L01.res.npy",
+   "size": 384,
+   "sha256": "6c9ec73cce812f8dc323b13100aa7a311aa84e9d75c4efc05545e78b5df9edbd"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L02.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L02.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L02.res.npy",
+   "size": 384,
+   "sha256": "a974c6ba5aa7286e8dbbae565982cbf20aae89564aaec17aa334c1543e853d48"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L03.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L03.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L03.res.npy",
+   "size": 384,
+   "sha256": "acdf09c98372fe816ac1789c768733da876f689e72ccf3e19eca9dce787ab5d6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L04.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L04.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L04.res.npy",
+   "size": 384,
+   "sha256": "90d56602c799aa84f2d87a52751f3102376a13a787bc98e83ecb6efe60e105a2"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L05.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L05.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L05.res.npy",
+   "size": 384,
+   "sha256": "353b3ea8321bb6fede23d62233f629522f911bdc7872509f073a6513b3746aa0"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L06.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L06.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L06.res.npy",
+   "size": 384,
+   "sha256": "5b5fcddf18be1948dd502d4619ff3daf50ad0bbb226117f1d50420029ce0989f"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L07.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L07.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L07.res.npy",
+   "size": 384,
+   "sha256": "1156d22ab50d1158f8bae4e6672fd43ecadc9995170c106bfc7dfdbae9216c74"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L08.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L08.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L08.res.npy",
+   "size": 384,
+   "sha256": "a692a2615c666e7878bd07afc88bcb9405df7a4b4e253f6529a18a7926966927"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L09.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L09.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L09.res.npy",
+   "size": 384,
+   "sha256": "a534a8dfd385241a27935ab5277d76cbc668039c44f58269fd7a6c4c7ac16bb4"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L10.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L10.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L10.res.npy",
+   "size": 384,
+   "sha256": "ec7aee2d5332bf7ece3fdb5590444da2bef0cf97c939fb6617efa8da5bd174e2"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L11.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L11.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L11.res.npy",
+   "size": 384,
+   "sha256": "b0eab69eab3e570f3e4498421b620fb6a5211f1632bf4d769f2c056587b0ae92"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L12.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L12.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L12.res.npy",
+   "size": 384,
+   "sha256": "b39eb3dd7d5cd52b76df81e87e32f69fd320705e07f4b82c1f28056b4bd05dd2"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L13.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L13.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L13.res.npy",
+   "size": 384,
+   "sha256": "68df4c8a08c1176d354b0a3445a7919d8b64b5ac1774c0d74bda9e11dadea78a"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L14.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L14.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L14.res.npy",
+   "size": 384,
+   "sha256": "adecd6c1443eab71ab081c8ee664a163e5e32b1a169b7065b22295f7a2053435"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L15.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L15.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L15.res.npy",
+   "size": 384,
+   "sha256": "895a3e1915092991ef8e6c792175336956d2ba3896060e6e5bba313b86e324af"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L16.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L16.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L16.res.npy",
+   "size": 384,
+   "sha256": "165afa4f09430115e465b6be7a8da42e69bc84ad74ac8170467da1bc6d1cb656"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L17.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L17.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L17.res.npy",
+   "size": 384,
+   "sha256": "48ba81eb6ecea9bc20ee38203a2c36c381c3fa7f1597583dc23b93b9593fcb5a"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L18.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L18.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L18.res.npy",
+   "size": 384,
+   "sha256": "4353a88937aa83dcd4c25d83e160131df11911cd7dec5403367af8c10b4509d3"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L19.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L19.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L19.res.npy",
+   "size": 384,
+   "sha256": "f5c05f339134bdebe2be3bc532b78ff214f24ac4f45e5943348db2ba207df9c9"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L20.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L20.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L20.res.npy",
+   "size": 384,
+   "sha256": "7653ff6410b083b325b72ea1ea40081806f1bb2899525a26fdea5263292ee590"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L21.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L21.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L21.res.npy",
+   "size": 384,
+   "sha256": "6a61cd1f55f5dc0fe0039ab5b6180e1b784e194710c9edc0e371e0c5088aded7"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L22.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L22.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L22.res.npy",
+   "size": 384,
+   "sha256": "c3ab48c14d2604b840f01a3c95e50f63339b6a68204b280f2019592a17c8fc31"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L23.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L23.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L23.res.npy",
+   "size": 384,
+   "sha256": "df7913e3acd4db06cbc9839518a770e6d14d8dc530ef62dd79a0579dceb3f962"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L24.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L24.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L24.res.npy",
+   "size": 384,
+   "sha256": "c7a4f1c37aef497d5d7d7871357bf682bcd3607b47ddf5dd0e5c3ee8a722f6cc"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L25.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L25.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L25.res.npy",
+   "size": 384,
+   "sha256": "5d42d1d316e10b63423e6ed09dac4ad59ae0f7b1662b30b67b82dc255128078b"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L26.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L26.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L26.res.npy",
+   "size": 384,
+   "sha256": "fb22c8109f4c22f7e11aefdb0212594afd0543abb24046e4970cb71ff9e049af"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L27.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L27.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L27.res.npy",
+   "size": 384,
+   "sha256": "53942056690b97c8e0d6744a6b729825127e78c950f476cb56f86db7e4cc3b5d"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L28.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L28.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L28.res.npy",
+   "size": 384,
+   "sha256": "17975b2b8e83ac6d8d6cc55b4a85709b435960fb52622c73228423071bce6485"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L29.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L29.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L29.res.npy",
+   "size": 384,
+   "sha256": "2be64eae717c3ab1e9b8a6c4b2ad1d53c30347fb5aa65529758ca7da3a666a13"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L30.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L30.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L30.res.npy",
+   "size": 384,
+   "sha256": "5909a9bec31291d7144498835439467fb4d3c86ae14ed86a751cee4ffcfe2c22"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L31.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L31.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L31.res.npy",
+   "size": 384,
+   "sha256": "feb31d8df3844a338f6877ee4c00778ce08dcbe002220af6b625ce37e957f0e8"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L32.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L32.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L32.res.npy",
+   "size": 384,
+   "sha256": "b4aff8dd9332fbcde579aab823ce6b5fabd1f95d89da979178c55f93815e21a2"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L33.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L33.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L33.res.npy",
+   "size": 384,
+   "sha256": "483f7c0c6af21333f1b240d810013285dacd3dbd97a2e44d525c925bb556fb4e"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L34.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L34.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L34.res.npy",
+   "size": 384,
+   "sha256": "57e09cb6264bba1f6852410236c88b32447937f9dafabaab350d1b9df6f16376"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L35.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L35.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L35.res.npy",
+   "size": 384,
+   "sha256": "d543d40163e23480a32a9799004bca0b4fad4bea72dbc0b492fd9102821d9ddf"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L36.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L36.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L36.res.npy",
+   "size": 384,
+   "sha256": "f228ba2aae58ef48c05466b81eae7214832f80fed83d40a1d97aeb57392e68cb"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L37.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L37.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L37.res.npy",
+   "size": 384,
+   "sha256": "690ef6db6cbf75a8b9af774385dd89bf903b20fdc1fdeecdd99a4da1ec97e045"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L38.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L38.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L38.res.npy",
+   "size": 384,
+   "sha256": "6a36ce13df41d1432ca7f315ce955701cfe592979960aa44c76809afe5f7a5ee"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L39.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L39.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L39.res.npy",
+   "size": 384,
+   "sha256": "e1e0f1aa71b85cf26fa19bb719167df4f2fcac1f125687beff101eaca5f1001b"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L40.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L40.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L40.res.npy",
+   "size": 384,
+   "sha256": "ff8cbf9b9f06f6c1f915fe55bbee885bd14e300f0b93ee42443f43f00bc10d27"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L41.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L41.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L41.res.npy",
+   "size": 384,
+   "sha256": "533be65fb5fdb3203924d4fb8054fd6a753714b2406463f953f482092e31831f"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L42.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L42.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L42.res.npy",
+   "size": 384,
+   "sha256": "c39ba0630cbf087d22fb4f35ba0786ceb0dc34ed44d29651b8de50a93e6ef061"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L43.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L43.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L43.res.npy",
+   "size": 384,
+   "sha256": "a528f5f5acf41d6dbc7a44055b8d0c2c5f470bfafb5cb5f063142dfe296270eb"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L44.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L44.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L44.res.npy",
+   "size": 384,
+   "sha256": "b7ca6cf8e770118338f652da67c36ce07c30b02ef03faf38324b00f408f1e892"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L45.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L45.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L45.res.npy",
+   "size": 384,
+   "sha256": "f1f7b125202b686746c78dc2f27b4679d2834015c75f8d9dff041f762f321e6e"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L46.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L46.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L46.res.npy",
+   "size": 384,
+   "sha256": "f436eb71b4834858a2b8631789eb978287fd88befcaf9b21c495a35ac20e418d"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L47.fmt.npy",
+   "size": 896,
+   "sha256": "72bb8f5d8f1fd7950d9246d8ab9b6763c9b95694c26c1ae778151232dd355127"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L47.row.npy",
+   "size": 3200,
+   "sha256": "09eb0cde51830b03506da79032f43832d1a42375929e7467e7c4b62ad89514c6"
+  },
+  {
+   "path": "quant/store/plans/bfp4-tiered-2.4e+10/L47.res.npy",
+   "size": 384,
+   "sha256": "f5e9f48ddf0a3f3378ecb259fd6a43e0e13be0a7f82dc65fd83cccfea6fdd6f7"
+  },
+  {
+   "path": "quant/store/pool/L00.b4.npy",
+   "size": 707788928,
+   "sha256": "e149c9a68acd074a7d7c633435ec1560029bb02e27f6049b056ffca20b248ceb"
+  },
+  {
+   "path": "quant/store/pool/L00.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L01.b4.npy",
+   "size": 707788928,
+   "sha256": "d8cd32302f8158abba28d5509824a19b21b440396ad27aac4be09e9bc4a042ba"
+  },
+  {
+   "path": "quant/store/pool/L01.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L02.b4.npy",
+   "size": 707788928,
+   "sha256": "0d0c57183c0f6719e3b604def6b68b40ff31586ec0ad51fa2cc730aedff13858"
+  },
+  {
+   "path": "quant/store/pool/L02.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L03.b4.npy",
+   "size": 707788928,
+   "sha256": "6791fcb01a781cbc9c25fe672e948531a6f622fa66a3a618d4b995919d5f4207"
+  },
+  {
+   "path": "quant/store/pool/L03.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L04.b4.npy",
+   "size": 707788928,
+   "sha256": "56558fc6ef96c7126f4503c60154027b60bc2171de4ba9cf2491658d96085ea3"
+  },
+  {
+   "path": "quant/store/pool/L04.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L05.b4.npy",
+   "size": 707788928,
+   "sha256": "bd5f0898bfc71538ec7f760ce0ed64bae5c383e36de4656b4d66a7b85940247c"
+  },
+  {
+   "path": "quant/store/pool/L05.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L06.b4.npy",
+   "size": 707788928,
+   "sha256": "4e040d9772be8ab48324eb63315be69ce26b4bbd55fc1cc72f8befc4b4f8c401"
+  },
+  {
+   "path": "quant/store/pool/L06.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L07.b4.npy",
+   "size": 707788928,
+   "sha256": "56ad3d91da3230cae79c60f6980f6211c0b52498ff88e2b62e52194701a344c4"
+  },
+  {
+   "path": "quant/store/pool/L07.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L08.b4.npy",
+   "size": 707788928,
+   "sha256": "fa339ad901bef37b386b790bd3d47d46431a6a1df1730ffd1f10cb7b11c6644c"
+  },
+  {
+   "path": "quant/store/pool/L08.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L09.b4.npy",
+   "size": 707788928,
+   "sha256": "5ee711e90e662fdb1c42de269248d7a5729827762e35fd15349efccb5b0fe6ed"
+  },
+  {
+   "path": "quant/store/pool/L09.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L10.b4.npy",
+   "size": 707788928,
+   "sha256": "fdf4c7d0e3ebc00db36ec189e0892491c8a1c3a33090656a6b033ce564f33c4e"
+  },
+  {
+   "path": "quant/store/pool/L10.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L11.b4.npy",
+   "size": 707788928,
+   "sha256": "15dd4f5df72468e9ccbf486cf78a1928a49e7457e26469e3ec0859285ebc68b4"
+  },
+  {
+   "path": "quant/store/pool/L11.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L12.b4.npy",
+   "size": 707788928,
+   "sha256": "4f94e8af523623b260b2609ee5d744ee8bd36a42776b4a456ddb66acd0a081f7"
+  },
+  {
+   "path": "quant/store/pool/L12.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L13.b4.npy",
+   "size": 707788928,
+   "sha256": "feaa5918a671d56e757c559019143befa85eeace3312094ba6235a5064b86224"
+  },
+  {
+   "path": "quant/store/pool/L13.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L14.b4.npy",
+   "size": 707788928,
+   "sha256": "7e56094e88a5c2e8be3874ef54bba968c89a89a065603f8c4f853560cd9040b1"
+  },
+  {
+   "path": "quant/store/pool/L14.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L15.b4.npy",
+   "size": 707788928,
+   "sha256": "ab97b2497ea858c8a269b8ef014aed9859a25ec2b4f97948c83fabe04247f99a"
+  },
+  {
+   "path": "quant/store/pool/L15.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L16.b4.npy",
+   "size": 707788928,
+   "sha256": "611df535e6e9a8277e88f0a14f8f5107528a80d6d5c03a10755b9c903c3bcf6f"
+  },
+  {
+   "path": "quant/store/pool/L16.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L17.b4.npy",
+   "size": 707788928,
+   "sha256": "e4e725176d3f5236b8fc841fb5bb6a366bcfa151f026ef8b5b1376a2b0cd7588"
+  },
+  {
+   "path": "quant/store/pool/L17.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L18.b4.npy",
+   "size": 707788928,
+   "sha256": "13acefe268a8f5655283a259024fa18047814cd4aa992b082f6f06bd0aa76990"
+  },
+  {
+   "path": "quant/store/pool/L18.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L19.b4.npy",
+   "size": 707788928,
+   "sha256": "2c523743309f3384acbc9edfbec490bc6f4b48862140272f623d647989eee988"
+  },
+  {
+   "path": "quant/store/pool/L19.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L20.b4.npy",
+   "size": 707788928,
+   "sha256": "0f83e64fcd97ac8d8eca3ba79a57df59f9d82979cd85f730498bbde2357e3dca"
+  },
+  {
+   "path": "quant/store/pool/L20.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L21.b4.npy",
+   "size": 707788928,
+   "sha256": "a8330b1fa6860932cee3be88b037fd980933ed44cfca4f92bb39cfda6a9e7dd0"
+  },
+  {
+   "path": "quant/store/pool/L21.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L22.b4.npy",
+   "size": 707788928,
+   "sha256": "306a812b809aa211015f3ef94cd96b2d0092c219f37d056a59b174f631f92eaa"
+  },
+  {
+   "path": "quant/store/pool/L22.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L23.b4.npy",
+   "size": 707788928,
+   "sha256": "e79fb2f7ca2b88f0b80121a6b6d983816939c58bde2883ae0947f32372d0aa19"
+  },
+  {
+   "path": "quant/store/pool/L23.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L24.b4.npy",
+   "size": 707788928,
+   "sha256": "6c0a93127c1acce7478635e8008d72383a4686778062646d047fa85a6039cfa6"
+  },
+  {
+   "path": "quant/store/pool/L24.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L25.b4.npy",
+   "size": 707788928,
+   "sha256": "29bbd7b786d5207a3ed16ba33bfa78e9b1d8f4aebe992f7923fab750a98bb1a8"
+  },
+  {
+   "path": "quant/store/pool/L25.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L26.b4.npy",
+   "size": 707788928,
+   "sha256": "e97b2c3afa6b16927bc028eeda66c002aa6f5f4d852389dbfb420aad092ed6b7"
+  },
+  {
+   "path": "quant/store/pool/L26.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L27.b4.npy",
+   "size": 707788928,
+   "sha256": "678b569393285cdd0d90080adccc946f667c57e4cbe61e5e3de996c3543c47c2"
+  },
+  {
+   "path": "quant/store/pool/L27.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L28.b4.npy",
+   "size": 707788928,
+   "sha256": "1905a02273069d846aa8eab5e746b16265232664feaeeb37836dfb5de6f325b7"
+  },
+  {
+   "path": "quant/store/pool/L28.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L29.b4.npy",
+   "size": 707788928,
+   "sha256": "bb2cdbcc8dc73c37d9c5b77e58cf6894f7e0538bb2c88d3ef7647258c8d0d20e"
+  },
+  {
+   "path": "quant/store/pool/L29.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L30.b4.npy",
+   "size": 707788928,
+   "sha256": "9ce426103ce2f95fc3e6c3663f5ff492b796463f7d888af6c480611c63311d55"
+  },
+  {
+   "path": "quant/store/pool/L30.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L31.b4.npy",
+   "size": 707788928,
+   "sha256": "4577932672de9bf9502fc0096f1cddd9bf01a0065e906fe7aa9692451b718d41"
+  },
+  {
+   "path": "quant/store/pool/L31.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L32.b4.npy",
+   "size": 707788928,
+   "sha256": "38616c3ba284a18d700ae66fcc5a774fbb1ee665c99a6f835780928d8d03aa2f"
+  },
+  {
+   "path": "quant/store/pool/L32.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L33.b4.npy",
+   "size": 707788928,
+   "sha256": "d5fee953c502a265c4b47cac7608377350f18f368c1747313cf8f0ba9a522ab2"
+  },
+  {
+   "path": "quant/store/pool/L33.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L34.b4.npy",
+   "size": 707788928,
+   "sha256": "f94074ee8b7ab3b9f7da786ca63d221fff8b09a098ba39573769567f703e5862"
+  },
+  {
+   "path": "quant/store/pool/L34.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L35.b4.npy",
+   "size": 707788928,
+   "sha256": "4c0ac37e54c3f165a030290d49bb31c3ad7c0317bf0ad2b79974f52d747ca242"
+  },
+  {
+   "path": "quant/store/pool/L35.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L36.b4.npy",
+   "size": 707788928,
+   "sha256": "6ea11b0352acd51406f5c2c0637478c826ab8cad7afd8b09fabe07cd0530af34"
+  },
+  {
+   "path": "quant/store/pool/L36.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L37.b4.npy",
+   "size": 707788928,
+   "sha256": "c8320acd682c16a663abfda1b4114517534a5e2b0d29239a4e3fd48946bba793"
+  },
+  {
+   "path": "quant/store/pool/L37.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L38.b4.npy",
+   "size": 707788928,
+   "sha256": "8bb101b2bbca2e49cd1eb5afbaf7d749d6e7289cbe655ffb670b31962bee90d0"
+  },
+  {
+   "path": "quant/store/pool/L38.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L39.b4.npy",
+   "size": 707788928,
+   "sha256": "ec7dd3589f79c88750bbb5982ba09cc85262213a19e5a4ded1aacf2bb2df4c54"
+  },
+  {
+   "path": "quant/store/pool/L39.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L40.b4.npy",
+   "size": 707788928,
+   "sha256": "2eca76dcb097918acfaea8a20024f40be6a06a5949e3226ba0b6128662f2ba57"
+  },
+  {
+   "path": "quant/store/pool/L40.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L41.b4.npy",
+   "size": 707788928,
+   "sha256": "04d777a5620898c5fef47fa5837ce222cda15f9564ebc507e9dc12d02118bde1"
+  },
+  {
+   "path": "quant/store/pool/L41.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L42.b4.npy",
+   "size": 707788928,
+   "sha256": "31562e2598198dae6fe83b5df446b0029b1d00c402e00e91311eb0e74525bfd9"
+  },
+  {
+   "path": "quant/store/pool/L42.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L43.b4.npy",
+   "size": 707788928,
+   "sha256": "a2b8b9f5cc9be561bf3fbff94f9440630d6f577da4d277f5b6eac52f2f3e7401"
+  },
+  {
+   "path": "quant/store/pool/L43.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L44.b4.npy",
+   "size": 707788928,
+   "sha256": "71506b441afc32f1d4e888bc444510ebb16d10f0662224fe5d52b5eadbfb3514"
+  },
+  {
+   "path": "quant/store/pool/L44.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L45.b4.npy",
+   "size": 707788928,
+   "sha256": "9259ef4f98af7089b977670cf919fb398deea73e513e7b678dea40f36d8bc41c"
+  },
+  {
+   "path": "quant/store/pool/L45.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L46.b4.npy",
+   "size": 707788928,
+   "sha256": "f48a3cd9d58db6ad0799826ec628f171f07e27ebadf379385a213c87070fe417"
+  },
+  {
+   "path": "quant/store/pool/L46.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "quant/store/pool/L47.b4.npy",
+   "size": 707788928,
+   "sha256": "0224b34358c449d13b3c0f9f937246a2947160a59fc41ab06765f9bedfdb5af6"
+  },
+  {
+   "path": "quant/store/pool/L47.b4idx.npy",
+   "size": 6272,
+   "sha256": "943e22cfb4ec8e8338359799ecd3ccc2a25c56654cb73bda01e87892b5ed921a"
+  },
+  {
+   "path": "mtp/experts-bfp4-search.u8",
+   "size": 1415577600,
+   "sha256": "eca12ab1cb9d71f2379e85fe14350d2274b5ac64b2fa3411fdb5d073fabcd147"
+  },
+  {
+   "path": "mtp/expert-profile.npy",
+   "size": 4224,
+   "sha256": "0553f6e748884d006ff7f7d1a78f52b52abbb42a47ff42f82ebe092553d16995"
+  }
+ ]
+}
