@@ -157,9 +157,11 @@ class Progress:
     def _line(self, now: float, end: str = "") -> None:
         rate = (self.done - self.start) / max(now - self.t0, 1e-9)
         pct = 100 * self.done / self.total if self.total else 100
-        msg = f"  {self.what}: {gb(self.done)} / {gb(self.total)} ({pct:.0f}%), {rate / 1e6:.0f} MB/s"
-        print(("\r" + msg + "   " + end) if self.tty else msg, file=sys.stderr, end="" if self.tty and not end else "\n",
-              flush=True)
+        msg = f"  {self.what}: {gb(self.done)} / {gb(self.total)} ({pct:.0f}%), {rate / 1e6:.1f} MB/s"
+        if self.tty:
+            print("\r" + msg + "   ", end=end, file=sys.stderr, flush=True)
+        else:
+            print(msg, file=sys.stderr, flush=True)
 
     def close(self) -> None:
         self._line(time.time(), "\n" if self.tty else "")
@@ -184,14 +186,18 @@ class Stamps:
         st = p.stat()
         with self.lock:
             self.d[rel] = [st.st_size, st.st_mtime_ns, sha]
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(json.dumps(self.d, indent=0, sort_keys=True))
-            os.replace(tmp, self.path)
+            self._save()
 
     def drop(self, rel: str) -> None:
         with self.lock:
-            self.d.pop(rel, None)
+            if self.d.pop(rel, None) is not None:
+                self._save()
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(self.d, indent=0, sort_keys=True))
+        os.replace(tmp, self.path)
 
 
 # ------------------------------------------------------------------------------------------------------- manifest
@@ -354,11 +360,14 @@ def download(url: str, dst: Path, f: dict, prog: Progress) -> None:
                 req = urllib.request.Request(url, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
                 with urllib.request.urlopen(req, timeout=60) as r, open(part, "ab" if have else "wb") as out:
                     if have and r.status != 206:         # the server ignored the range: start over
+                        say(f"  {f['path']}: the server ignored the range request, starting it over")
                         out.seek(0)
                         out.truncate()
                         prog.add(-have)
                         have = 0
                         h = hashlib.sha256()
+                    elif have:
+                        say(f"  {f['path']}: resuming at {have / 1e6:.0f} MB")
                     while have < size:
                         b = r.read(BLOCK)
                         if not b:
@@ -400,8 +409,11 @@ def cmd_fetch(a) -> int:
     for f in files:
         p = local(data, f["path"])
         if p.is_file() and p.stat().st_size == f["size"]:
-            if stamps.ok(f["path"], p, f["size"], f["sha256"]) or (
-                    sha256_file(p) == f["sha256"] and stamps.set(f["path"], p, f["sha256"]) is None):
+            good = stamps.ok(f["path"], p, f["size"], f["sha256"])
+            if not good and sha256_file(p) == f["sha256"]:
+                stamps.set(f["path"], p, f["sha256"])
+                good = True
+            if good:
                 done_bytes += f["size"]
                 continue
             say(f"  {f['path']}: content differs from the manifest, downloading it again")
