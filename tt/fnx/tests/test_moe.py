@@ -151,7 +151,8 @@ def default_placement() -> list[np.ndarray]:
                                                   Path(__file__).resolve().parents[2] / "tools" / "expert_placement.py")
     ep = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ep)
-    pairs = ep.read_profile(ep.STRATA / "data" / "expert-profile-coder.bin")
+    from fnx import paths
+    pairs = ep.read_profile(paths.EXPERT_PROFILE)
     n = int((27.29 - 3.0 - 0.5) * 1e9 // (ep.TILES * ep.TILE_BYTES["bfloat8_b"]))   # the tool's defaults
     mask = ep.resident_mask(pairs, n)
     return [np.nonzero(mask[l])[0].astype(np.int32) for l in range(mask.shape[0])]
