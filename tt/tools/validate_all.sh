@@ -1,10 +1,13 @@
 #!/bin/bash
-# validate_all.sh - every test of the TT port on the current tree, in order; one summary line per test.
-# Device tests go through devrun.sh (device lock); test_serve runs on the host (its engine takes the lock itself).
-# Log: /var/tmp/strata-tt/logs/validate/<stamp>/
+# validate_all.sh - every test of the TT port on this tree, in order; one summary line per test.
+# Device tests go through devrun.sh (device lock); test_serve runs on the host (its engine takes the lock itself),
+# with PY (default FNX_DATA/venv/bin/python, the dev host's venv).  Log: FNX_DATA/logs/validate/<stamp>/
 set -u
-cd /var/tmp/strata-tt/flashnext_tt
-OUT=/var/tmp/strata-tt/logs/validate/$(date +%Y%m%d-%H%M%S)
+TTDIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)      # <repo>/tt
+eval "$(python3 "$TTDIR/fnx/paths.py" --shell)"     # DATA LOGS ...
+PY=${PY:-$DATA/venv/bin/python}
+cd "$TTDIR"
+OUT=$LOGS/validate/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$OUT"
 run() {   # name, then the devrun.sh / host command
   local name=$1; shift
@@ -25,5 +28,5 @@ run mtp         tools/devrun.sh v-mtp  fnx/tests/test_mtp.py tt
 run model       tools/devrun.sh v-model -m fnx.tests.test_model
 run spec        tools/devrun.sh v-spec fnx/tests/test_spec.py qsa inv spec
 run trace       tools/devrun.sh v-trace fnx/tests/test_trace.py plain spec sparse bench
-run serve       /var/tmp/strata-tt/venv/bin/python -m fnx.tests.test_serve
+run serve       "$PY" -m fnx.tests.test_serve
 echo "summary: $OUT/summary.txt"

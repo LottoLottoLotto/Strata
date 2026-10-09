@@ -18,8 +18,12 @@
 # serve verifier refuse to run without the profile-filled VRAM expert tier, so the smallest one is used:
 # --expert-profile data/expert-profile-coder.bin --expert-cache 1 (one resident blob, computed on the GPU); every
 # other routed expert of a verify window runs on the CPU pool (Strata's CPU kernels, the ones fnx.cpu_experts calls).
+# Development machine only: the reference is the CUDA build $DATA/build-cuda/strata of the pinned Strata checkout
+# $DATA/Strata (82f46a8; its tools/ and README.md, from which the prompts come), FNX_DATA's dev layout (fnx.paths).
 set -euo pipefail
-W=/var/tmp/strata-tt
+TTDIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)      # <repo>/tt
+eval "$(python3 "$TTDIR/fnx/paths.py" --shell)"     # DATA ...
+W=$DATA
 SRC=$W/Strata
 PY=$W/venv/bin/python
 export STRATA_GGUF_PY=$W/third_party/llama.cpp/gguf-py
