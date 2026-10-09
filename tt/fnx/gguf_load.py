@@ -101,7 +101,8 @@ class Model:
 
     def available(self, name: str, expert: int | None = None) -> bool:
         """Whether the bytes of `name` (or of one expert of it) are on disk yet: a file still being fetched by
-        tools/pdl.py has a `<file>.done` sidecar listing finished 64 MiB chunks; without one the file is complete."""
+        tools/pdl.py has a `<file>.done` sidecar listing finished 64 MiB chunks; without one the file is complete, and
+        so it is when the sidecar is Strata setup's own finish mark (setup.py mark(): text, e.g. a date, not numbers)."""
         fi, t = self.index[name]
         path = Path(self.files[fi].path)
         done_path = Path(str(path) + ".done")
@@ -114,7 +115,10 @@ class Model:
             lo, n = lo + expert * per, per
         chunk = 64 << 20
         size = path.stat().st_size
-        done = {int(x) for x in done_path.read_text().split()}
+        try:
+            done = {int(x) for x in done_path.read_text().split()}
+        except ValueError:                      # setup's finish mark: written after the download completed
+            return True
         if len(done) >= (size + chunk - 1) // chunk:
             return True
         return all(c in done for c in range(lo // chunk, (lo + n - 1) // chunk + 1))
@@ -143,6 +147,25 @@ def selftest() -> None:
     got = dequant_q2_0(np.frombuffer(raw, dtype=np.uint8))
     assert np.array_equal(ref, got), "Q2_0 vectorized dequant differs from the scalar reference"
     assert BLOCK_GEOMETRY["Q2_0"] == (64, 18)
+    # <shard>.done: tools/pdl.py's finished-chunk list, or Strata setup's finish mark (the whole file is there)
+    import tempfile
+    from types import SimpleNamespace as NS
+    chunk = 64 << 20
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "m.gguf"
+        with open(f, "wb") as fh:
+            fh.truncate(3 * chunk)                                    # sparse, 3 chunks
+        m = Model.__new__(Model)
+        m.files = [NS(path=f, data_start=0)]
+        m.index = {n: (0, NS(offset=off, expected_bytes=lambda: 1 << 20, shape=[1, 1, 1]))
+                   for n, off in (("first", 0), ("last", 2 * chunk))}
+        side = Path(str(f) + ".done")
+        assert m.available("first") and m.available("last"), "no sidecar: complete"
+        side.write_text("0\n")                                        # pdl: chunk 0 finished
+        assert m.available("first") and not m.available("last"), "pdl chunk list"
+        for text in ("whole (checked against its own tensor directory)", "2026-10-08 19:57"):
+            side.write_text(text)                                     # setup.py mark()
+            assert m.available("first") and m.available("last"), f"setup mark {text!r}"
     print("gguf_load selftest OK")
 
 

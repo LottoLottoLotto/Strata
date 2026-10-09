@@ -17,6 +17,7 @@ run() {   # name, then the devrun.sh / host command
   printf '%-14s rc=%d  %4ds  %s\n' "$name" "$rc" $((SECONDS - t0)) \
     "$(grep -E 'PASS|FAIL' "$OUT/$name.out" | tail -1 | cut -c1-120)" | tee -a "$OUT/summary.txt"
 }
+run gguf_load  "$PY" -m fnx.gguf_load
 run cpu_experts env NODEV=1 tools/devrun.sh v-cpu -m fnx.tests.test_cpu_experts
 run hc          tools/devrun.sh v-hc   -m fnx.tests.test_hc
 run ple         tools/devrun.sh v-ple  -m fnx.tests.test_ple
