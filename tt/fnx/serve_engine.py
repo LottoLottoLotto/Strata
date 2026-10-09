@@ -1,12 +1,16 @@
 """Strata's `strata --serve` engine protocol on the P150: Strata's own server (serve/server.py, unchanged) drives
 fnx.tt.model.TtModel through it as if it were the CUDA engine.
 
-    python -m fnx.serve_engine --serve [--max-context 32768] [--native SHARD1] [--prefill auto|N]
-                               [--prompt-cache N] [--threads N] [--eos-ids a,b] [--no-warmup]
-                               [--spec N] [--spec-min-p P]
+    python -m fnx.serve_engine --serve [--native SHARD1] [--ple-gguf SHARD2] [--mtp MTP_RT] [--pack PACK]
+                               [--max-context 32768] [--prefill auto|N] [--prompt-cache N] [--threads N]
+                               [--eos-ids a,b] [--no-warmup] [--spec N] [--spec-min-p P]
 
-(tools/fnx-engine runs it in the TT image holding the shared device lock; Strata's other engine arguments are
-accepted and ignored.)  Protocol (spec Part 8, spec-serve-oracle.md §1-§7; serve/server.py StrataEngine):
+(tt/serve/tt-engine.sh runs it in the TT image holding the shared device lock.)  Model files come from the
+arguments Strata's setup writes (--native shard 1, --ple-gguf the PLE shard, --mtp the drafter's mtp/rt; --pack is
+the server's tokenizer pack, nothing the TT engine reads), this port's own data (GPTQ-BFP expert store, the drafter's
+BFP4 experts, converted-tensor caches) from FNX_DATA (fnx.paths); Strata's other engine arguments are accepted and
+ignored.  INFO reports engine=<the repository's CMakeLists.txt version>.  Protocol (spec Part 8, spec-serve-oracle.md
+§1-§7; serve/server.py StrataEngine):
 stdout carries ONLY protocol lines (fd 1 is re-pointed to stderr at start, so library output goes to the log):
 `INFO key=val..`, `READY <ctx> stop`; per `GEN <max_new>[ key=val..] <id,id,..>`: `RESUME r`, `PP reached n ms
 tok/s` after every prompt chunk, `REUSED r`, `T <id>` per token (EOS 248044/248046 included), then exactly one
@@ -77,9 +81,19 @@ from pathlib import Path
 
 import numpy as np
 
+from . import paths
 from .config import EOS_IDS, N_VOCAB
 
-ENGINE_VERSION = "fnx-tt-0.1"
+
+def source_version() -> str:
+    """The repository's version (CMakeLists.txt `project(strata VERSION x.y.z.w)`, setup.py's source_version): the
+    engine version INFO reports, numeric as Strata's server and setup parse it."""
+    m = re.search(r"project\(strata VERSION ([\d.]+)", paths.CMAKELISTS.read_text(encoding="utf-8"))
+    if not m:
+        raise RuntimeError(f"{paths.CMAKELISTS}: no `project(strata VERSION ...)`")
+    return m.group(1)
+
+
 CTX_MAX = 32768                # advertised context limit (READY): fnx.tt.qsa's selection verified to 32800 positions
 TURN_TOKEN = 248045            # <|im_start|>: the checkpoint goes where the prompt's last one begins
 PENALTY_WINDOW_CAP = 4096      # generate.cpp:5989
@@ -536,10 +550,11 @@ class Engine:
             f"{'sampled' if sp.sampled else 'greedy'}{' + penalties' if sp.penalized else ''}{spec}")
 
 
-def make_drafter(mesh, w, max_ctx: int, k: int, min_p: float = 0.0, model=None) -> Drafter:
+def make_drafter(mesh, w, max_ctx: int, k: int, min_p: float = 0.0, model=None, mw=None) -> Drafter:
     """The MTP drafter (fnx.tt.mtp.Mtp: its 512 routed experts on the device, fnx.tt.moe_device; FNX_MTP_RESIDENT
     (default fnx.tt.mtp.DEFAULT_RESIDENT) of them, the hottest, in device DRAM, the others and its embedding rows in
-    pinned host memory: `model`'s pool when it was built with host_reserve=fnx.tt.mtp.reserve_items(), else its own)."""
+    pinned host memory: `model`'s pool when it was built with host_reserve=fnx.tt.mtp.reserve_items(), else its own).
+    mw: its fnx.ref.mtp.MtpWeights (default: MtpWeights(), fnx.paths.MTP_RT)."""
     from .ref.mtp import MtpWeights
     from .tt.mtp import Mtp, env_resident
     t0 = time.time()
@@ -548,7 +563,8 @@ def make_drafter(mesh, w, max_ctx: int, k: int, min_p: float = 0.0, model=None) 
     pool = model.host_pool if first is not None else None
     # Strata's drafter attends a 32768-cell window; the served positions stay below the context (<= 32768), so a
     # window over every cell the drafter holds (context + draft steps, Mtp's 256-cell rounding) is the same attention
-    mtp = Mtp(mesh, w, MtpWeights(), max_ctx=max_ctx, steps=k, window=max(32768, -(-(max_ctx + k + 1) // 256) * 256),
+    mtp = Mtp(mesh, w, mw or MtpWeights(), max_ctx=max_ctx, steps=k,
+              window=max(32768, -(-(max_ctx + k + 1) // 256) * 256),
               resident=resident, pool=pool, pool_first=first or 0)
     mtp.probs = min_p > 0               # the draft probabilities only serve the min_p chain stop
     log(f"MTP drafter built in {time.time() - t0:.0f} s ({k} drafts per window; {min(resident, 512)} of its 512 "
@@ -661,7 +677,13 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--serve", action="store_true", help="Strata's engine protocol on stdin/stdout (required)")
     ap.add_argument("--max-context", type=int, default=CTX_MAX, help=f"context, at most {CTX_MAX}")
-    ap.add_argument("--native", default=None, help="GGUF shard 1 (default: fnx.weights.DEFAULT_SHARD1 / FNX_GGUF)")
+    ap.add_argument("--native", default=None, help="GGUF shard 1 (default: fnx.paths.SHARD1, $FNX_GGUF)")
+    ap.add_argument("--ple-gguf", default=None,
+                    help="the GGUF shard with the PLE table (default: the other shards named like --native's)")
+    ap.add_argument("--mtp", default=None, help="Strata's MTP runtime directory, <data>/mtp/rt (default: "
+                                                "fnx.paths.MTP_RT)")
+    ap.add_argument("--pack", default=None, help="Strata's pack of the model: the server's tokenizer; the TT engine "
+                                                 "reads its tensors from the GGUF shards and FNX_DATA")
     ap.add_argument("--prefill", default="auto", help=f"prompt rows per device call (auto = {DEFAULT_CHUNK})")
     ap.add_argument("--prompt-cache", type=int, default=6, help="conversation checkpoints kept (0 = no reuse)")
     ap.add_argument("--threads", type=int, default=16, help="CPU expert threads")
@@ -698,20 +720,26 @@ def main(argv=None) -> int:
     from .weights import Weights
 
     spec = max(1, a.spec)
-    w = Weights(a.native)
+    w = Weights(a.native, ple=a.ple_gguf)
+    mw = None
+    if spec > 1:
+        from .ref.mtp import MtpWeights
+        mw = MtpWeights(a.mtp)
+    log(f"model: {', '.join(str(f.path) for f in w.model.files)}; MTP {mw.rt if mw else '(off: --spec 1)'}; "
+        f"pack {a.pack or '-'} (the server's tokenizer); data {paths.DATA}; engine {source_version()}")
     experts = CpuExperts(w.model, N_LAYERS, a.threads)
     mesh = open_mesh()
     try:
         moe = os.environ.get("FNX_MOE", DEFAULT_MOE)
         from .tt.mtp import reserve_items
         model = TtModel(mesh, w, experts, max_ctx=max(ctx, chunk), moe=moe,   # KV + indexer state (warm-up: chunk rows)
-                        host_reserve=reserve_items() if spec > 1 else 0)   # + the drafter's host items
+                        host_reserve=reserve_items(mw=mw) if spec > 1 else 0)   # + the drafter's host items
         log(f"TtModel built in {time.time() - t0:.0f} s: MoE {moe}" + (
             f" (plan {os.environ.get('FNX_MOE_PLAN', DEFAULT_PLAN)}: experts "
             f"{sum(lay[3].store.nbytes for lay in model.layers) / 1e9:.2f} GB device DRAM + "
             f"{sum(lay[3].store.host_bytes for lay in model.layers) / 1e9:.2f} GB host pool, "
             f"{(model.host_pool.nbytes if model.host_pool else 0) / 1e9:.2f} GB pinned)" if moe == "device" else ""))
-        drafter = make_drafter(mesh, w, max(ctx, chunk), spec - 1, a.spec_min_p, model) if spec > 1 else None
+        drafter = make_drafter(mesh, w, max(ctx, chunk), spec - 1, a.spec_min_p, model, mw) if spec > 1 else None
         if not a.no_warmup:                              # program builds for the prompt and decode shapes
             t1 = time.time()
             warm_up(model, drafter, chunk)
@@ -732,8 +760,8 @@ def main(argv=None) -> int:
             + (f"MTP verify windows of {spec} rows (draft min_p {a.spec_min_p})" if drafter else "plain decode"))
         emit(f"INFO context={ctx} kv=bf16 kv_resident=0 spec={spec} mtp_max={spec if drafter else 0} lookup=0 "
              f"prompt_chunk={chunk} conversation_cache_slots={engine.prompt_cache} tail_role_token=-1 "
-             f"vram_elastic=0 cvec=0 device=p150 engine={ENGINE_VERSION}")
-        ready = os.environ.get("FNX_READY_FILE")          # tools/fnx-engine's start bound: READY reached
+             f"vram_elastic=0 cvec=0 device=p150 engine={source_version()}")
+        ready = os.environ.get("FNX_READY_FILE")          # tt/serve/tt-engine.sh's start bound: READY reached
         if ready:
             Path(ready).touch()
         emit(f"READY {ctx} stop")

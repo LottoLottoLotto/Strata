@@ -1,27 +1,32 @@
 """Strata's serving path on the P150: fnx.serve_engine over Strata's engine protocol, then Strata's own server
-(serve/server.py, unchanged) over HTTP with tools/fnx-engine as its engine.
+(serve/server.py of this repository) over HTTP with tt/serve/tt-engine.sh as its engine.
 
-Runs on the HOST (Strata's venv), not through tools/devrun.sh: tools/fnx-engine takes the device lock itself (a
-devrun wrapper would hold it and deadlock).  From /var/tmp/strata-tt/flashnext_tt:
+Runs on the HOST (Strata's venv), not through tools/devrun.sh: tt-engine.sh takes the device lock itself (a devrun
+wrapper would hold it and deadlock).  From the repository's tt/:
 
-    /var/tmp/strata-tt/venv/bin/python -m fnx.tests.test_serve [--skip proto,http] [--port 8090]
+    $FNX_DATA/venv/bin/python -m fnx.tests.test_serve [--skip proto,http] [--port 8090] [--config CONFIG]
+
+The engine configuration is a Strata run config (--config, e.g. one `setup.py --backend tt` wrote; default: the one
+this test writes to FNX_DATA/logs/test-serve-config.json from fnx.paths' dev data: exe tt/serve/tt-engine.sh, args
+--pack --native --ple-gguf --mtp --prefill 128 --max-context 32768 --spec 4 --spec-min-p 0.5, env FNX_DATA).  The
+protocol part runs the config's exe with its model-file arguments (--pack, --native, --ple-gguf, --mtp) and its env.
 
 Reference answer of the golden chat prompt (greedy, thinking off): with the Strata-exact CPU experts (FNX_MOE=cpu)
 Strata's own 50 serve tokens incl. EOS; with the device MoE (FNX_MOE=device: re-quantized experts, other logits than
-Strata's) the same engine configuration's plain eager greedy decode (one more engine process with FNX_SPEC=1 and
+Strata's) the same engine configuration's plain eager greedy decode (one more engine process with --spec 1 and
 FNX_TRACE=0), so the checks below prove the served path (traced, MTP verify windows, checkpoints) exact against it.
 The MoE is FNX_MOE from the environment, else fnx.serve_engine.DEFAULT_MOE.
 
-P. Protocol, one engine process (tools/fnx-engine --serve):
-   READY <2048> stop; request-level refusals (ERR / SERR, engine stays idle); the golden chat prompt greedy ->
-   the reference tokens, exactly; a follow-up that extends the conversation -> RESUME = the 80 held
-   tokens and only the suffix read; the chat prompt again -> resumed from the turn checkpoint (RESUME 24) and the
-   same 50 tokens (snapshot/restore exactness); seeded sampling reproducible; a large presence penalty never
-   repeats a windowed token; STOP mid-decode -> DONE cancel; a stale STOP is ignored; QUIT -> exit 0, device lock
-   released.  TTFT and decode tok/s of the golden request.  The engine runs its default speculative decoding (MTP
-   verify windows, INFO spec=4; FNX_SPEC=1 in the environment runs plain decode): P8 allows a window's tokens of lag.
-H. HTTP on --port (tools/fnx-serve.sh: serve/server.py of the serving tree, Strata v0.1.40.4, --engine strata
-   --config /var/tmp/strata-tt/strata-fnx-coder.json):
+P. Protocol, one engine process (<exe> --serve <model files> --max-context 2048 --prefill auto):
+   READY <2048> stop, INFO engine= the repository's version; request-level refusals (ERR / SERR, engine stays idle);
+   the golden chat prompt greedy -> the reference tokens, exactly; a follow-up that extends the conversation ->
+   RESUME = the 80 held tokens and only the suffix read; the chat prompt again -> resumed from the turn checkpoint
+   (RESUME 24) and the same 50 tokens (snapshot/restore exactness); seeded sampling reproducible; a large presence
+   penalty never repeats a windowed token; STOP mid-decode -> DONE cancel; a stale STOP is ignored; QUIT -> exit 0,
+   device lock released.  TTFT and decode tok/s of the golden request.  The engine runs its default speculative
+   decoding (MTP verify windows, INFO spec=4; FNX_SPEC=1 in the environment runs plain decode): P8 allows a window's
+   tokens of lag.
+H. HTTP on --port (tt/tools/fnx-serve.sh: this repository's serve/server.py --engine strata --config CONFIG):
    /v1/chat/completions non-stream (thinking off) = the reference answer's text; a follow-up turn reusing the
    conversation (timings.cache_n = everything the engine held, prompt_n = the new suffix only); the same chat
    streamed (content equal, from the turn checkpoint); /v1/messages; a streamed request whose client disconnects
@@ -45,15 +50,12 @@ import threading
 import time
 from pathlib import Path
 
-W = Path("/var/tmp/strata-tt")
-FNX = W / "flashnext_tt"
-STRATA = W / "Strata"
-ENGINE = FNX / "tools" / "fnx-engine"
-CONFIG = W / "strata-fnx-coder.json"
-LOCK = "/var/tmp/gemma4-12b/device.lock"
-GOLDEN = Path(os.environ.get("FNX_GOLDEN", W / "golden"))
-LOGS = W / "logs"
-PY = W / "venv" / "bin" / "python"
+from fnx import paths
+
+LOCK = paths.DEVICE_LOCK
+GOLDEN = paths.GOLDEN
+LOGS = paths.LOGS
+MODEL_ARGS = ("--pack", "--native", "--ple-gguf", "--mtp")     # the config's model files, given to every engine
 EOS = (248044, 248046)
 TURN = 248045
 CHAT_Q = "What is the capital of France, and what is it famous for? Answer in two sentences."
@@ -74,10 +76,32 @@ def read_ids(p: Path) -> list[int]:
     return [int(x) for x in p.read_text().replace(",", " ").split()]
 
 
-def tokenizer():
-    sys.path.insert(0, str(STRATA / "tools"))
+def dev_config(port: int) -> Path:
+    """A Strata run config for this repository's engine wrapper on fnx.paths' dev data (what setup's to_tt writes)."""
+    cfg = {"exe": str(paths.TT_DIR / "serve" / "tt-engine.sh"),
+           "args": ["--pack", str(paths.PACK), "--native", str(paths.SHARD1), "--ple-gguf", str(paths.SHARD2),
+                    "--mtp", str(paths.MTP_RT), "--prefill", "128", "--max-context", "32768", "--spec", "4",
+                    "--spec-min-p", "0.5"],
+           "cwd": str(paths.REPO), "tokenizer": str(paths.PACK / "tokenizer"),
+           "model_name": "qwen3.8-flash-next-coder-iq1_m", "log": str(LOGS / "test-serve-strata.log"),
+           "lib_dirs": [], "port": port, "idle_unload_s": 900, "backend": "tt", "env": {"FNX_DATA": str(paths.DATA)}}
+    p = LOGS / "test-serve-config.json"
+    p.write_text(json.dumps(cfg, indent=2) + "\n")
+    return p
+
+
+def model_args(cfg: dict) -> list[str]:
+    a, out = cfg["args"], []
+    for k in MODEL_ARGS:
+        if k in a:
+            out += [k, a[a.index(k) + 1]]
+    return out
+
+
+def tokenizer(cfg: dict):
+    sys.path.insert(0, str(paths.STRATA_TOOLS))
     import strata_tokenizer as ST
-    t = W / "packs" / "coder-iq1_m" / "tokenizer"
+    t = Path(cfg["tokenizer"])
     vocab = json.loads((t / "vocab.json").read_text(encoding="utf-8"))
     tokens = [None] * len(vocab)
     for s, i in vocab.items():
@@ -97,7 +121,7 @@ def lock_free() -> bool:
 
 
 def engine_containers() -> list[str]:
-    out = subprocess.run(["docker", "ps", "--filter", "name=fnx-engine-", "--format", "{{.Names}}"],
+    out = subprocess.run(["docker", "ps", "--filter", "name=tt-engine-", "--format", "{{.Names}}"],
                          capture_output=True, text=True).stdout
     return out.split()
 
@@ -114,13 +138,14 @@ def released(wait_s: float = 20.0) -> bool:
 
 # ------------------------------------------------------------------------------------------------ protocol
 class EngineProc:
-    """tools/fnx-engine as serve/server.py runs it: line pipes, stderr appended to a log."""
+    """The config's engine exe (tt/serve/tt-engine.sh) as serve/server.py runs it: line pipes, stderr appended to a
+    log, the config's cwd and env."""
 
-    def __init__(self, args: list[str], log: Path, env: dict | None = None):
+    def __init__(self, cfg: dict, args: list[str], log: Path, env: dict | None = None):
         self.log = open(log, "a", encoding="utf-8")
-        self.p = subprocess.Popen([str(ENGINE), "--serve", *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=self.log, text=True, encoding="utf-8", bufsize=1, cwd=FNX,
-                                  env={**os.environ, **(env or {})})
+        self.p = subprocess.Popen([cfg["exe"], "--serve", *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=self.log, text=True, encoding="utf-8", bufsize=1, cwd=cfg["cwd"],
+                                  env={**os.environ, **cfg.get("env", {}), **(env or {})})
         self.q: queue.Queue = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
 
@@ -183,12 +208,12 @@ class EngineProc:
 
     @property
     def container(self) -> str:
-        """tools/fnx-engine names its container after its own pid (the Popen pid)."""
-        return f"fnx-engine-{self.p.pid}"
+        """tt-engine.sh names its container after its own pid (the Popen pid)."""
+        return f"tt-engine-{self.p.pid}"
 
     def close(self) -> None:
         """Make sure the engine and its container are gone, whatever state the test left them in: QUIT (if the
-        engine still runs), then SIGTERM (fnx-engine forwards it, removes a container that does not exit within
+        engine still runs), then SIGTERM (tt-engine.sh forwards it, removes a container that does not exit within
         20 s and resets the board), then SIGKILL and `docker rm -f` of the container (the shared card)."""
         if self.p.poll() is None:
             try:
@@ -221,14 +246,15 @@ def moe() -> str:
     return os.environ.get("FNX_MOE", DEFAULT_MOE)
 
 
-def reference() -> list[int]:
+def reference(cfg: dict) -> list[int]:
     """The greedy answer to the golden chat prompt the engine must reproduce (module docstring)."""
     if moe() == "cpu":
         return read_ids(GOLDEN / "chat" / "serve_gen.ids")
-    print("\n== reference: the device MoE's plain eager greedy decode (FNX_SPEC=1 FNX_TRACE=0)", flush=True)
+    print("\n== reference: the device MoE's plain eager greedy decode (--spec 1, FNX_TRACE=0)", flush=True)
     chat = read_ids(GOLDEN / "prompts" / "chat.ids")
     t0 = time.perf_counter()
-    e = EngineProc(["--max-context", "2048"], LOGS / "test-serve-engine.log", {"FNX_SPEC": "1", "FNX_TRACE": "0"})
+    e = EngineProc(cfg, model_args(cfg) + ["--max-context", "2048", "--spec", "1"], LOGS / "test-serve-engine.log",
+                   {"FNX_TRACE": "0"})
     try:
         e.ready()
         r = e.gen(chat, MAX_NEW)
@@ -244,14 +270,16 @@ def finish_of(ref: list[int]) -> str:
     return "stop" if ref and ref[-1] in EOS else "length"
 
 
-def part_proto(tok, golden: list[int]) -> None:
-    print(f"\n== P. protocol: tools/fnx-engine --serve (MoE {moe()})", flush=True)
+def part_proto(tok, cfg: dict, golden: list[int]) -> None:
+    print(f"\n== P. protocol: {cfg['exe']} --serve (MoE {moe()})", flush=True)
     chat = read_ids(GOLDEN / "prompts" / "chat.ids")
     t0 = time.perf_counter()
-    e = EngineProc(["--max-context", "2048", "--prefill", "auto"], LOGS / "test-serve-engine.log")
+    from fnx.serve_engine import source_version
+    e = EngineProc(cfg, model_args(cfg) + ["--max-context", "2048", "--prefill", "auto"],
+                   LOGS / "test-serve-engine.log")
     try:
         info, ready = e.ready()
-        check("P1 READY", ready[1:] == ["2048", "stop"] and info.get("engine", "").startswith("fnx"),
+        check("P1 READY", ready[1:] == ["2048", "stop"] and info.get("engine") == source_version(),
               f"{' '.join(ready)}, INFO {info} after {time.perf_counter() - t0:.0f} s (incl. lock wait)")
         refusals = [("GEN 0 1,2", "ERR bad request: max_new"), ("GEN 5 1,-2", "ERR bad request: invalid token id"),
                     ("GEN 5 1,248320", "ERR a token id is outside the vocabulary"),
@@ -369,18 +397,18 @@ def engine_log_since(log: Path, offset: int) -> str:
         return f.read().decode("utf-8", "replace")
 
 
-def part_http(tok, port: int, golden: list[int]) -> None:
-    print(f"\n== H. HTTP: tools/fnx-serve.sh (serve/server.py --engine strata --config {CONFIG} --port {port})",
-          flush=True)
-    cfg = json.loads(CONFIG.read_text())
+def part_http(tok, config: Path, port: int, golden: list[int]) -> None:
+    serve = paths.TT_DIR / "tools" / "fnx-serve.sh"
+    print(f"\n== H. HTTP: {serve} (serve/server.py --engine strata --config {config} --port {port})", flush=True)
+    cfg = json.loads(config.read_text())
     log = Path(cfg["log"])
     log.parent.mkdir(parents=True, exist_ok=True)
     log.touch()
     want = tok.decode([t for t in golden if t not in EOS]).strip()
     chat = read_ids(GOLDEN / "prompts" / "chat.ids")
     t0 = time.perf_counter()
-    srv = subprocess.Popen([str(FNX / "tools" / "fnx-serve.sh")], env={**os.environ, "PORT": str(port),
-                           "CONFIG": str(CONFIG)}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    srv = subprocess.Popen([str(serve)], env={**os.environ, "PORT": str(port), "CONFIG": str(config)},
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     lines: queue.Queue = queue.Queue()
 
     def pump():
@@ -468,10 +496,10 @@ def part_http(tok, port: int, golden: list[int]) -> None:
 
 
 def remove_engines(grace_s: float = 40.0) -> None:
-    """Engine containers left behind (a killed server, a hung engine): SIGTERM to their fnx-engine wrapper (pid =
+    """Engine containers left behind (a killed server, a hung engine): SIGTERM to their tt-engine.sh wrapper (pid =
     the container name's suffix; it forwards the signal, removes a container that does not exit and resets the
     board), then `docker rm -f` whatever is still there.  The device lock serializes engines, so any running
-    fnx-engine-* container here is this test's."""
+    tt-engine-* container here is this test's."""
     left = engine_containers()
     if not left:
         return
@@ -492,16 +520,21 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip", default="", help="comma list of parts to skip (proto,http)")
     ap.add_argument("--port", type=int, default=8090)
+    ap.add_argument("--config", type=Path, default=None,
+                    help="a Strata run config with the TT engine (default: written from fnx.paths' dev data)")
     a = ap.parse_args()
     skip = set(a.skip.split(","))
     LOGS.mkdir(parents=True, exist_ok=True)
-    tok = tokenizer()
+    config = a.config or dev_config(a.port)
+    cfg = json.loads(config.read_text())
+    print(f"config {config}: exe {cfg['exe']}, args {' '.join(cfg['args'])}, env {cfg.get('env', {})}", flush=True)
+    tok = tokenizer(cfg)
     try:
-        golden = reference()
+        golden = reference(cfg)
         if "proto" not in skip:
-            part_proto(tok, golden)
+            part_proto(tok, cfg, golden)
         if "http" not in skip:
-            part_http(tok, a.port, golden)
+            part_http(tok, config, a.port, golden)
     finally:
         remove_engines()
     bad = [n for n, ok, _ in RESULTS if not ok]
