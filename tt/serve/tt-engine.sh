@@ -40,7 +40,9 @@ mkdir -p "$(dirname "$LOCK")"
 exec 9<>"$LOCK" || { echo "tt-engine: cannot open the device lock $LOCK" >&2; exit 1; }
 if ! flock -n 9; then
   echo "tt-engine: waiting for the device lock $LOCK (another device job is running)" >&2
-  flock 9
+  # a signal (e.g. Ctrl+C to the server's process group) ends the wait with flock failing: never go on without the
+  # lock (the card is shared), end instead; the server reports an engine that exited before READY
+  flock 9 || { echo "tt-engine: the wait for the device lock was interrupted; not starting" >&2; exit 1; }
 fi
 waited=0
 while grep -q . /proc/driver/tenstorrent/0/pids 2>/dev/null; do
