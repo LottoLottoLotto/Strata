@@ -19,6 +19,7 @@ import sys
 import numpy as np
 
 from fnx import paths
+from fnx.config import N_EXPERT
 from fnx.cpu_experts import CpuExperts
 from fnx.gguf_load import STRATA_TOOLS, Model, dequant_q2_0
 
@@ -69,11 +70,11 @@ def main() -> int:
 
     for L in (0, 1):
         x = rng.standard_normal((5, H)).astype(np.float32)
-        ids = slots(rng, 256)
+        ids = slots(rng, N_EXPERT)
         out = cx.moe(L, x, ids)
         names = [f"blk.{L}.ffn_{r}_exps.weight" for r in ("gate", "up", "down")]
         w = worst_rel(out, ids, x, lambda e: [m.get_expert(n, e) for n in names])
-        check(f"coder layer {L} ({'/'.join(m.type_of(n) for n in names)})", w <= TOL, f"worst rel {w:.3e}")
+        check(f"{paths.MODEL} layer {L} ({'/'.join(m.type_of(n) for n in names)})", w <= TOL, f"worst rel {w:.3e}")
 
     # synthetic Q2_0 layer (gate/up [n_expert, FF, H], down [n_expert, H, FF]) in GGUF expert-stack layout
     n_expert = 512
@@ -100,7 +101,7 @@ def main() -> int:
     # grouping independence: token 0 alone == token 0 inside the 5-token call
     for L in (0, 1, 48):
         x = rng.standard_normal((5, H)).astype(np.float32)
-        ids = slots(rng, 256) if L < 48 else np.stack([rng.choice(used, 10, replace=False) for _ in range(5)]).astype(np.int32)
+        ids = slots(rng, N_EXPERT) if L < 48 else np.stack([rng.choice(used, 10, replace=False) for _ in range(5)]).astype(np.int32)
         ids[1, :3] = ids[0, :3]
         group = cx.moe(L, x, ids)[0]
         alone = cx.moe(L, x[:1], ids[:1])[0]

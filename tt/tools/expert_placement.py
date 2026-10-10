@@ -108,13 +108,15 @@ def measure_free_gb() -> float:
     from fnx.weights import Weights
     w = Weights()
     mesh = open_mesh()
+    model = None
     try:
-        TtModel(mesh, w, CpuExperts(w.model, N_LAYERS, 4), N_LAYERS, max_ctx=2048, verbose=False)
-        m = ttnn.get_memory_view(mesh, ttnn.BufferType.DRAM)
+        model = TtModel(mesh, w, CpuExperts(w.model, N_LAYERS, 4), N_LAYERS, max_ctx=2048, verbose=False)  # kept alive:
+        m = ttnn.get_memory_view(mesh, ttnn.BufferType.DRAM)                     # its buffers go with the object
         free = m.total_bytes_free_per_bank * m.num_banks / 1e9
         print(f"measured: {m.total_bytes_allocated_per_bank * m.num_banks / 1e9:.3f} GB allocated, {free:.3f} GB free "
               f"(largest contiguous {m.largest_contiguous_bytes_free_per_bank / 1e9:.3f} GB per bank x {m.num_banks})")
     finally:
+        model = None
         ttnn.close_mesh_device(mesh)
     return free
 

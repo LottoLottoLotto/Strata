@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from . import paths
+from .config import check_metadata
 from .gguf_load import Model
 
 DEFAULT_SHARD1 = str(paths.SHARD1)
@@ -26,8 +27,10 @@ FLOAT = {"F32", "F16", "BF16"}
 class Weights:
     def __init__(self, model: Model | str | None = None, cache_dir: str | None = None, ple: str | None = None):
         """model: a Model or shard 1's path (default fnx.paths.SHARD1); ple: the shard with the PLE table (Strata's
-        --ple-gguf; default: the shard name's other shards)."""
+        --ple-gguf; default: the shard name's other shards).  The GGUF must match the FNX_MODEL variant's geometry
+        (config.check_metadata)."""
         self.model = model if isinstance(model, Model) else Model(model or DEFAULT_SHARD1, [ple] if ple else None)
+        check_metadata(self.model.metadata)
         stem = Path(self.model.files[0].path).name.removesuffix(".gguf")
         self.cache = (Path(cache_dir) if cache_dir else paths.CACHE) / "dequant" / stem
         self.cache.mkdir(parents=True, exist_ok=True)

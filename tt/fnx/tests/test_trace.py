@@ -35,8 +35,9 @@ from fnx.weights import Weights
 SAMPLED = " temperature=0.7 top_p=0.95 top_k=20 seed=42"
 
 
-def golden(name: str) -> tuple[list[int], list[int]]:
-    return read_ids(GOLDEN / "prompts" / f"{name}.ids"), read_ids(GOLDEN / name / "serve_gen.ids")
+def golden(name: str) -> list[int]:
+    """The golden prompt's token ids (tokenizer-only: the same file serves every variant)."""
+    return read_ids(GOLDEN / "prompts" / f"{name}.ids")
 
 
 def same(a, b) -> bool:
@@ -129,7 +130,7 @@ def moe_info(tt) -> str:
 def pass_plain(tt, names, gen: int, chunk: int) -> dict:
     rec = {}
     for name in names:
-        prompt, _ = golden(name)
+        prompt = golden(name)
         prefill(tt, prompt, chunk)
         steps, tok = [], prompt[-1]
         t0 = time.perf_counter()
@@ -146,7 +147,7 @@ def pass_spec(tt, drafter, names, gen: int, chunk: int) -> dict:
     from fnx.serve_engine import Engine
     rec = {}
     for name in names:
-        prompt, _ = golden(name)
+        prompt = golden(name)
         out = {}
         for keys in ("", SAMPLED):
             r = Rec(tt)
@@ -198,7 +199,7 @@ def pass_conv(tt, drafter, chunk: int, gen: int, ctx: int = 4096) -> dict:
     eng = Engine(tt, None, ctx=32768, chunk=chunk, prompt_cache=6, eos=EOS_IDS, drafter=drafter)
     rec, decode_recaptures = [], 0
     for name in ("chat", "doc") if ctx >= 2304 else ("chat",):
-        prompt, _ = golden(name)
+        prompt = golden(name)
         toks = []
         for ids in (prompt, None, prompt, prompt):     # the 4th: only shapes seen before (steady state)
             ids = prompt + toks[0] + follow if ids is None else ids
@@ -236,7 +237,7 @@ def pass_bench(tt, drafter, names, gen: int, chunk: int) -> dict:
     spec = Engine(tt, None, ctx=32768, chunk=chunk, prompt_cache=0, eos=EOS_IDS, drafter=drafter)
     rec = {}
     for name in names:
-        prompt, _ = golden(name)
+        prompt = golden(name)
         r = {}
         for label, eng in (("plain", plain), ("mtp", spec)):
             if tt._trace is not None:
