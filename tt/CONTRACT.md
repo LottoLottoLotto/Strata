@@ -159,7 +159,9 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   fails. The alloc KL predictor underestimates BFP2 damage ~7x (pred +0.006, measured +0.041). Max reachable cut 44%
   (BFP2 rows exist for each layer's coldest 40% only). h2-40: all +3.07%, chat +2.70%, KL .110, GSM8K 40/50 -> fails.
   Curve (24.0 GB plan, new GDN, traced MTP chat/code/doc tok/s): h2-0 45.0/49.2/48.4 (T=1 38.7 ms), h2-25 47.0/59.3/51.7
-  (35.4 ms), h2-40 48.0/56.1/54.3 (34.1 ms).
+  (35.4 ms), h2-40 48.0/56.1/54.3 (34.1 ms).  Since 2026-10-10 the dev store holds no BFP2 rows and no h2 / a-28.5 /
+  a-30.0 plans (deleted for disk space); rebuilding them needs `fnx.quant.pipeline quantize --pool2 F` (CUDA) and then
+  `fnx.quant.alloc --h2`.
 - LM head: `FNX_HEAD=bfp8` (default) | `gptq4` (GPTQ-BFP4 head from `fnx/quant/head.py`; 0.69 ms/token (packed heads:
   1.65 vs 0.97 ms traced) + 0.34 GB DRAM saved). Gated 2026-10-07 on the cpu path: all dPPL +0.17% -> +0.73% (chat +1.19%), top-1 .970 -> .951, KL .008 -> .014;
   GSM8K-50 47/50 (bfp8 head 45/50, Strata 44/50: within n=50 noise); kept OPT-IN (cost/benefit). Every head mode places its 80 uploaded blocks by exact page copies into the bank-packed weight (`fnx.tt.packed_matmul.place_packed`; matmul `PackedMatmul`, bitwise the stock decode matmul and, for rows > 32, the old auto-config call); the old bfp8 concat + typecast
