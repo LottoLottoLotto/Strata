@@ -1,11 +1,12 @@
 """Flash-Next on the P150 (TTNN; eager, or traced decode steps): host embedding + PLE row gathers, 48 HC-wrapped
 GDN/QSA + MoE layers on device, output_hc read, LM head, greedy.
 
-MoE (FNX_MOE, default DEFAULT_MOE): "device" = fnx.tt.moe_device.MoeDevice, the whole MoE block on the device (router,
+MoE (FNX_MOE, default DEFAULT_MOE of the variant): "device" = fnx.tt.moe_device.MoeDevice, the whole MoE block on the device (router,
 top-10, routed experts re-quantized to block floats from the GPTQ plan FNX_MOE_PLAN of fnx.quant.store, default
 DEFAULT_PLAN: its resident experts in device DRAM, the others in pinned host memory read over PCIe by the kernels;
 no host round trip, so a dense decode step is one captured trace); "cpu" = fnx.tt.moe.Moe, the routed experts on the
-host CPU through fnx.cpu_experts (Strata's own kernels and GGUF weights: Strata-exact experts).
+host CPU through fnx.cpu_experts (Strata's own kernels and GGUF weights: Strata-exact experts), except a resident set
+on the device as bfloat8_b (fnx.tt.moe.default_resident).
 
 `TtModel(mesh, w, experts).forward(tokens, positions)` consumes T consecutive tokens of one sequence (T rows travel
 as tensors of LOGICAL shape [1, 1, T, ...], TILE-padded to 32; modules read T from shape[-2]) and returns
@@ -56,7 +57,12 @@ from .moe_device import F_BFP4, MoeDevice, host_matrices, matrix_bytes, quant_la
 from .ple import Ple
 from .qsa import Qsa
 
-DEFAULT_MOE = "device"                 # FNX_MOE: "device" | "cpu" (= fnx.serve_engine.DEFAULT_MOE; quality gate 2026-10-07)
+# FNX_MOE default per variant (fnx.paths.DEFAULT_MOE; quality gates: coder 2026-10-07, iq3s 2026-10-10).  The Coder's
+# GPTQ-BFP4 device MoE is its fastest path within the gate.  iq3s keeps 65% of its experts off the card: its device
+# MoE reads them over PCIe and pins 50.6 GB of host RAM, and against the cpu MoE with 4671 bfloat8_b experts resident
+# it is no faster on the golden prompts (traced MTP chat/code/doc 28.0/28.8/33.5 vs 33.8/29.7/33.5 tok/s; ~25% faster
+# on general chat, served) at 9x the KL against the exact experts (.061 vs .0067; GSM8K-50 46 both, exact 47).
+DEFAULT_MOE = paths.DEFAULT_MOE
 # FNX_MOE_PLAN default per variant (fnx.paths.MODEL): the fnx.quant.store plan of the device experts.
 # coder: GPTQ-BFP4; 24.0e9 B, 8680 experts resident = 85.9% of routings.  Serving at 32K + MTP drafter + traces leaves
 #   1.52 GB DRAM free (tools/dram_budget.py, 480 MiB trace region).  Same numerics as 2.2e+10 (placement only); T=1
@@ -130,9 +136,10 @@ class TtModel:
             n_host, item = sum(n for n, _ in hm), max([item] + [b for _, b in hm])
         if n_host + host_reserve:
             from .hostmem import HostPool, drop_page_cache
-            # the expert store and the GGUF shards are streamed once anyway: their cached pages would only fragment
-            # the free memory the pool's 2 MiB chunks need
-            drop_page_cache(([plan.pool.root] if lms else []) + [f.path for f in w.model.files])
+            if lms:
+                # the device MoE streams its store once and never reads the GGUF experts: their cached pages would
+                # only fragment the free memory the pool's 2 MiB chunks need (the cpu MoE computes from those pages)
+                drop_page_cache([plan.pool.root] + [f.path for f in w.model.files])
             self.host_pool = HostPool(n_host + host_reserve, item)
             self.host_reserve_first = n_host if host_reserve else None
             if verbose:

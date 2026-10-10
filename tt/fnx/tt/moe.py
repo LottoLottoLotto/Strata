@@ -25,8 +25,8 @@ all-float dequantized experts, the CPU kernels 1.6%; bfloat4_b 18%).  x and h ar
 HiFi4 (HiFi2 measured no faster: the kernels are bound by data movement).  Device time at T=1: ~0.1-0.3 ms for 1-10
 resident experts, below the CPU experts' time it overlaps.  The shared expert stays an f32-activation ttnn.linear: in
 the kernel (BF16 x) its error rose 1.7e-3 -> 3.9e-3 and golden doc agreement fell (0.9392 -> 0.9333, KL 0.029 -> 0.046).  The resident set is per layer (`resident=`, or the placement file named by
-FNX_EXPERT_PLACEMENT, written by tools/expert_placement.py from Strata's expert profile); without one every routed
-expert runs on the CPU.
+FNX_EXPERT_PLACEMENT, written by tools/expert_placement.py from Strata's expert profile, else the variant's default,
+`default_resident`); without one every routed expert runs on the CPU.
 
 Why the top-k runs on the host: qwen36's TopKRouting kernel (models/common/modules/moe/kernels/routing_math.hpp)
 selects on BF16-rounded logits (bf16-equal logits fall to the lower id, not the larger f32 value), returns BF16
@@ -99,11 +99,27 @@ def load_placement(path: str | os.PathLike) -> list[np.ndarray]:
 
 
 _PLACEMENT: dict[str, list[np.ndarray]] = {}
+# the cpu MoE's resident experts per variant when FNX_EXPERT_PLACEMENT is unset: the N hottest (layer, expert) pairs of
+# Strata's profile, bfloat8_b (= tools/expert_placement.py --measure: free DRAM after the model - 3 GB headroom -
+# 0.5 GB MTP drafter; iq3s 2026-10-10).  The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is
+# the device one).
+DEFAULT_RESIDENT = {"coder": 0, "iq3s": 4671}
 
 
 def default_resident(L: int) -> np.ndarray:
-    """Layer L's resident experts from the placement file FNX_EXPERT_PLACEMENT (none when it is unset)."""
-    p = os.environ.get("FNX_EXPERT_PLACEMENT", "")
+    """Layer L's resident experts: the placement file FNX_EXPERT_PLACEMENT (set but empty: none), else the variant's
+    DEFAULT_RESIDENT hottest pairs of Strata's profile (fnx.paths.EXPERT_PROFILE)."""
+    p = os.environ.get("FNX_EXPERT_PLACEMENT")
+    if p is None:
+        n = DEFAULT_RESIDENT[paths.MODEL]
+        if not n:
+            return np.zeros(0, np.int32)
+        p = f"profile:{n}"
+        if p not in _PLACEMENT:
+            from ..quant.datafree import read_profile
+            top = read_profile()[:n]
+            _PLACEMENT[p] = [np.sort(top[top[:, 0] == l, 1]).astype(np.int32) for l in range(N_LAYERS)]
+        return _PLACEMENT[p][L]
     if not p:
         return np.zeros(0, np.int32)
     if p not in _PLACEMENT:

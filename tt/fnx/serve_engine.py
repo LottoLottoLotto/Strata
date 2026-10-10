@@ -58,10 +58,11 @@ forwards of 1 and --spec rows and the drafter's rounds (TtModel.enable_trace, fn
 step, verify window, partial commit and draft round; prompt chunks and other row counts stay eager.  Bitwise the eager
 tokens.
 
-MoE (FNX_MOE, default DEFAULT_MOE): "device" = every routed expert on the P150 (fnx.tt.moe_device: GPTQ-BFP4 experts of
+MoE (FNX_MOE, default fnx.tt.model.DEFAULT_MOE of the variant): "device" = every routed expert on the P150 (fnx.tt.moe_device: GPTQ-BFP4 experts of
 the plan FNX_MOE_PLAN, the hottest in device DRAM, the rest in pinned host memory the kernels read over PCIe), so a
 dense decode step or verify window is ONE captured trace; "cpu" = Strata's own CPU expert kernels on the GGUF experts
-(Strata-exact logits; 2 host round trips per layer).  The MTP drafter's 512 routed experts run on the device either way
+(Strata-exact logits; 2 host round trips per layer; a resident set as bfloat8_b on the device, fnx.tt.moe).  The MTP
+drafter's 512 routed experts run on the device either way
 (fnx.tt.mtp: BFP4 from their Q2_0 values, fnx.tt.moe_device), so a traced draft round is one captured segment.
 """
 from __future__ import annotations
@@ -102,7 +103,6 @@ DEFAULT_CHUNK = 128            # prompt rows per TtModel call: 16/32/64/128 rows
                                # (256 rows of the code prompt, GdnOps, 2026-10-06)
 ERR_EXPECTED = "ERR expected: GEN <max_new> <id,id,...> or GENI <max_new> <file> <id,id,...>"
 DEFAULT_SPEC = 4              # verify-window rows with the MTP drafter (1 + 3 drafts)
-DEFAULT_MOE = "device"        # FNX_MOE: routed experts on the device (fnx.tt.moe_device) or the host CPU (fnx.tt.moe)
 
 
 def log(msg: str) -> None:
@@ -716,7 +716,7 @@ def main(argv=None) -> int:
 
     from .cpu_experts import CpuExperts
     from .config import N_LAYERS
-    from .tt.model import DEFAULT_PLAN, TtModel, open_mesh
+    from .tt.model import DEFAULT_MOE, DEFAULT_PLAN, TtModel, open_mesh
     from .weights import Weights
 
     spec = max(1, a.spec)
@@ -738,7 +738,8 @@ def main(argv=None) -> int:
             f" (plan {os.environ.get('FNX_MOE_PLAN', DEFAULT_PLAN)}: experts "
             f"{sum(lay[3].store.nbytes for lay in model.layers) / 1e9:.2f} GB device DRAM + "
             f"{sum(lay[3].store.host_bytes for lay in model.layers) / 1e9:.2f} GB host pool, "
-            f"{(model.host_pool.nbytes if model.host_pool else 0) / 1e9:.2f} GB pinned)" if moe == "device" else ""))
+            f"{(model.host_pool.nbytes if model.host_pool else 0) / 1e9:.2f} GB pinned)" if moe == "device" else
+            f" ({sum(len(lay[3].dev.resident) for lay in model.layers if lay[3].dev)} experts resident on the device)"))
         drafter = make_drafter(mesh, w, max(ctx, chunk), spec - 1, a.spec_min_p, model, mw) if spec > 1 else None
         if not a.no_warmup:                              # program builds for the prompt and decode shapes
             t1 = time.time()

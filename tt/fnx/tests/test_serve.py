@@ -11,11 +11,12 @@ this test writes to FNX_DATA/logs/test-serve-config.json from fnx.paths' dev dat
 --pack --native --ple-gguf --mtp --prefill 128 --max-context 32768 --spec 4 --spec-min-p 0.5, env FNX_DATA).  The
 protocol part runs the config's exe with its model-file arguments (--pack, --native, --ple-gguf, --mtp) and its env.
 
-Reference answer of the golden chat prompt (greedy, thinking off): with the Strata-exact CPU experts (FNX_MOE=cpu)
-Strata's own 50 serve tokens incl. EOS; with the device MoE (FNX_MOE=device: re-quantized experts, other logits than
-Strata's) the same engine configuration's plain eager greedy decode (one more engine process with --spec 1 and
-FNX_TRACE=0), so the checks below prove the served path (traced, MTP verify windows, checkpoints) exact against it.
-The MoE is FNX_MOE from the environment, else fnx.serve_engine.DEFAULT_MOE.
+Reference answer of the golden chat prompt (greedy, thinking off): with the Strata-exact CPU experts (FNX_MOE=cpu, the
+Coder) Strata's own 50 serve tokens incl. EOS; otherwise (the device MoE: re-quantized experts, other logits than
+Strata's; iq3s, which has no Strata golden) the same engine configuration's plain eager greedy decode (one more engine
+process with --spec 1 and FNX_TRACE=0), so the checks below prove the served path (traced, MTP verify windows,
+checkpoints) exact against it.
+The MoE is FNX_MOE from the environment, else the variant's fnx.paths.DEFAULT_MOE.
 
 P. Protocol, one engine process (<exe> --serve <model files> --max-context 2048 --prefill auto):
    READY <2048> stop, INFO engine= the repository's version; request-level refusals (ERR / SERR, engine stays idle);
@@ -83,7 +84,7 @@ def dev_config(port: int) -> Path:
                     "--mtp", str(paths.MTP_RT), "--prefill", "128", "--max-context", "32768", "--spec", "4",
                     "--spec-min-p", "0.5"],
            "cwd": str(paths.REPO), "tokenizer": str(paths.PACK / "tokenizer"),
-           "model_name": "qwen3.8-flash-next-coder-iq1_m", "log": str(LOGS / "test-serve-strata.log"),
+           "model_name": f"qwen3.8-flash-next-{paths.PACK.name}", "log": str(LOGS / "test-serve-strata.log"),
            "lib_dirs": [], "port": port, "idle_unload_s": 900, "backend": "tt", "env": {"FNX_DATA": str(paths.DATA)}}
     p = LOGS / "test-serve-config.json"
     p.write_text(json.dumps(cfg, indent=2) + "\n")
@@ -242,15 +243,18 @@ def rates(r: dict) -> tuple[float, float]:
 
 
 def moe() -> str:
-    from fnx.serve_engine import DEFAULT_MOE
+    from fnx.paths import DEFAULT_MOE
     return os.environ.get("FNX_MOE", DEFAULT_MOE)
 
 
 def reference(cfg: dict) -> list[int]:
-    """The greedy answer to the golden chat prompt the engine must reproduce (module docstring)."""
-    if moe() == "cpu":
-        return read_ids(GOLDEN / "chat" / "serve_gen.ids")
-    print("\n== reference: the device MoE's plain eager greedy decode (--spec 1, FNX_TRACE=0)", flush=True)
+    """The greedy answer to the golden chat prompt the engine must reproduce (module docstring): Strata's own for the
+    cpu MoE when the variant has one (golden/chat/serve_gen.ids: the Coder's), else this configuration's plain eager
+    greedy decode (the device MoE; iq3s, whose golden directory has only the prompts)."""
+    strata = GOLDEN / "chat" / "serve_gen.ids"
+    if moe() == "cpu" and strata.exists():
+        return read_ids(strata)
+    print(f"\n== reference: the {moe()} MoE's plain eager greedy decode (--spec 1, FNX_TRACE=0)", flush=True)
     chat = read_ids(GOLDEN / "prompts" / "chat.ids")
     t0 = time.perf_counter()
     e = EngineProc(cfg, model_args(cfg) + ["--max-context", "2048", "--spec", "1"], LOGS / "test-serve-engine.log",

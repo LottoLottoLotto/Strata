@@ -178,6 +178,20 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   (35.4 ms), h2-40 48.0/56.1/54.3 (34.1 ms).  Since 2026-10-10 the dev store holds no BFP2 rows and no h2 / a-28.5 /
   a-30.0 plans (deleted for disk space); rebuilding them needs `fnx.quant.pipeline quantize --pool2 F` (CUDA) and then
   `fnx.quant.alloc --h2`.
+- iq3s (FNX_MODEL=iq3s), gated 2026-10-10 against its own cpu-config reference (`fnx.eval.run --config cpu
+  --write-ref`, FNX_DATA/eval-iq3s; the TT cpu path matched fnx.ref.model.RefModel on chat-ultrachat-test-1, mean NLL
+  .844 vs .849).  Default MoE `cpu` (fnx.paths.DEFAULT_MOE) with fnx.tt.moe.DEFAULT_RESIDENT = 4671 bfloat8_b experts
+  on the device (Strata's full-model profile, hottest first; `expert_placement.py --measure`: the iq3s model takes
+  5.78 GB of DRAM): all dPPL +0.63%, top-1 .974, KL .0067, GSM8K-50 46 (exact cpu 47).  `FNX_MOE=device`
+  (search4-tiered-2.4e+10, `fnx.quant.datafree`; DRAM budget 2.403e10 measured, 50.6 GB host RAM pinned): all -1.55%
+  (chat -6.45%, code +0.33%, instruct +0.09%, book +0.17%), top-1 .916, KL .061, GSM8K-50 46.  Traced bench (golden
+  prompts, MTP chat/code/doc, load 2-20): cpu 33.8/29.7/33.5 tok/s (plain 19.0/18.6/18.3), device 28.0/28.8/33.5
+  (plain 18.1/18.0/23.7); served general chat (warm, MTP): cpu ~20-22, device ~25-28 tok/s; both test_trace bench PASS.
+  The full model vs the Coder (whose 256 experts are byte-identical to 256 of iq3s's 512; dense tensors identical):
+  better on code and prose (book NLL 1.40/1.15/0.90 vs 1.90/1.60/1.44), GSM8K-20 19 vs 17, worse on ultrachat replies
+  (chat PPL 5.39 vs 3.43: it puts more mass on ending the turn mid-reply, e.g. `<|im_end|>` after "to get you").
+  The device MoE drops the page cache of the store and GGUF before pinning (fnx.tt.hostmem.drop_page_cache): with tens
+  of GB cached, the 44 GB host tier fell back to 4 KiB pins and ran out of KMD fds.
 - LM head: `FNX_HEAD=bfp8` (default) | `gptq4` (GPTQ-BFP4 head from `fnx/quant/head.py`; 0.69 ms/token (packed heads:
   1.65 vs 0.97 ms traced) + 0.34 GB DRAM saved). Gated 2026-10-07 on the cpu path: all dPPL +0.17% -> +0.73% (chat +1.19%), top-1 .970 -> .951, KL .008 -> .014;
   GSM8K-50 47/50 (bfp8 head 45/50, Strata 44/50: within n=50 noise); kept OPT-IN (cost/benefit). Every head mode places its 80 uploaded blocks by exact page copies into the bank-packed weight (`fnx.tt.packed_matmul.place_packed`; matmul `PackedMatmul`, bitwise the stock decode matmul and, for rows > 32, the old auto-config call); the old bfp8 concat + typecast

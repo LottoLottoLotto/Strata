@@ -12,8 +12,8 @@ defines a new configuration, e.g. a device-expert build):
     device-gptq  every routed expert on the device (FNX_MOE=device, fnx.tt.moe_device): GPTQ-BFP4 plan
            bfp4-tiered-2.2e+10 (7957 experts in device DRAM, the rest in the pinned host pool read over PCIe; same
            numerics as the 2.4e+10 default: placement only)
-    bfp8   FNX_MOE=cpu, FNX_EXPERT_PLACEMENT = tools/expert_placement.py's default placement (4555 experts resident as bfloat8_b,
-           the rest on the CPU)
+    bfp8   FNX_MOE=cpu, FNX_EXPERT_PLACEMENT = tools/expert_placement.py's measured placement of the variant (coder
+           4555, iq3s 4671 experts resident as bfloat8_b, the rest on the CPU)
 
 Teacher forcing (fnx.eval.data's evalset, reference = fnx.eval.torchref's cache): each sequence from a fresh state
 (TtModel.reset), eager TtModel.forward over 128-row chunks (the serve engine's prompt chunk) with head + logits for
@@ -45,10 +45,11 @@ import numpy as np
 from .. import paths
 from . import data, score
 
+BFP8_PLACEMENT = {"coder": "coder-bfloat8_b-4555.json", "iq3s": "iq3s-bfloat8_b-4671.json"}[paths.MODEL]
 CONFIGS = {
     "cpu": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": ""},
     "device-gptq": {"FNX_MOE": "device", "FNX_MOE_PLAN": "bfp4-tiered-2.2e+10"},
-    "bfp8": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": str(paths.CACHE / "placement" / "coder-bfloat8_b-4555.json")},
+    "bfp8": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": str(paths.CACHE / "placement" / BFP8_PLACEMENT)},
 }
 RUNS = data.EVAL / "runs"
 CHUNK = 128
