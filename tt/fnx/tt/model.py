@@ -129,7 +129,10 @@ class TtModel:
             firsts = list(np.cumsum([0] + [n for n, _ in hm])[:-1])
             n_host, item = sum(n for n, _ in hm), max([item] + [b for _, b in hm])
         if n_host + host_reserve:
-            from .hostmem import HostPool
+            from .hostmem import HostPool, drop_page_cache
+            # the expert store and the GGUF shards are streamed once anyway: their cached pages would only fragment
+            # the free memory the pool's 2 MiB chunks need
+            drop_page_cache(([plan.pool.root] if lms else []) + [f.path for f in w.model.files])
             self.host_pool = HostPool(n_host + host_reserve, item)
             self.host_reserve_first = n_host if host_reserve else None
             if verbose:

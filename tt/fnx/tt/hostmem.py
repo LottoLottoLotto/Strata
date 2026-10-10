@@ -42,6 +42,7 @@ import errno
 import fcntl
 import mmap
 import os
+import resource
 import struct
 import time
 from pathlib import Path
@@ -75,6 +76,30 @@ def default_chunk() -> str:
     return c
 
 
+def drop_page_cache(paths) -> int:
+    """posix_fadvise(DONTNEED) on every file in `paths` (files or directories, recursively): their clean page-cache
+    pages return to the free lists, so a pool allocated next finds 2 MiB of contiguous memory more often.  For the
+    model files and expert store the engine streams anyway: with tens of GB of them cached, about half the 2 MiB
+    chunks fail (HostPool._alloc_2m) and the rest of the pool lands in the 4k region, one pin (and one page of KMD
+    memory) per physical run; the iq3s host tier (~44 GB) then ran the KMD fds out (2026-10-10).  Dirty pages and other
+    processes' mappings are untouched; no privileges needed.  Returns the number of files advised."""
+    n = 0
+    for p in map(Path, paths):
+        for f in (p.rglob("*") if p.is_dir() else [p]):
+            if not f.is_file():
+                continue
+            try:
+                fd = os.open(f, os.O_RDONLY | os.O_CLOEXEC)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                n += 1
+            finally:
+                os.close(fd)
+    return n
+
+
 class HostPool:
     """`n_items` items of `item_bytes` (rounded up to 64 B) in pinned host memory the device reads over PCIe.
 
@@ -105,6 +130,11 @@ class HostPool:
             raise ValueError(f"item of {item_bytes} B does not fit a {chunk} chunk")
         self.n_items = int(n_items)
         self._device = device
+        # the 4k region spreads its pins over fds (PINS_PER_FD each): docker's default soft limit of 1024 open files
+        # would cap it near a million pins, far below the hard limit
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft < hard:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
         self._fds: list[int] = []
         self._probe_fd = None
         self._fd_pins = PINS_PER_FD
