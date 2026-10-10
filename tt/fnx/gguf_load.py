@@ -129,9 +129,15 @@ class Model:
 
     def get_expert(self, name: str, expert: int) -> np.ndarray:
         """(n_out, n_in) float32 of one expert."""
+        return self.get_experts(name, expert, expert + 1)[0]
+
+    def get_experts(self, name: str, e0: int, e1: int) -> np.ndarray:
+        """(e1 - e0, n_out, n_in) float32 of experts e0..e1-1 (one dequantization call)."""
         t = self.info(name)
         n_in, n_out = t.shape[0], t.shape[1]
-        return self._dequant(t.type_name, self.raw_expert(name, expert), n_in * n_out).reshape(n_out, n_in)
+        per = t.expected_bytes() // t.shape[2]
+        raw = self.raw(name)[e0 * per:e1 * per]
+        return self._dequant(t.type_name, raw, (e1 - e0) * n_in * n_out).reshape(e1 - e0, n_out, n_in)
 
     def type_of(self, name: str) -> str:
         return self.info(name).type_name

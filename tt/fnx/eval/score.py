@@ -1,4 +1,5 @@
-"""Teacher-forced scores of candidate logits against the cached float32 reference (fnx.eval.torchref), and the tables.
+"""Teacher-forced scores of candidate logits against the cached reference (fnx.eval.torchref's float32 model, or for a
+variant without one a TT configuration's own logits: fnx.eval.run --write-ref, `ref_rows`), and the tables.
 
 Per scored target token i (predicted by position i-1):
     nll      -log q(token i)        (candidate), nll_ref from the reference's tgt_lp
@@ -19,6 +20,7 @@ import torch
 from . import data
 
 CORPORA = ("chat", "code", "instruct", "book")
+TOPK = 256                       # the reference's top-K (= fnx.eval.torchref.TOPK)
 
 
 def load_ref(rec_id: str) -> dict:
@@ -48,6 +50,31 @@ def score_rows(logits, pos: np.ndarray, tokens: np.ndarray, ref: dict) -> dict:
     kl = kl + torch.where(pr > 0, pr * (pr.clamp(min=1e-300).log() - qr.log()), torch.zeros_like(pr))
     return {"pos": pos.astype(np.int32), "nll": nll.numpy(), "nll_ref": -ref["tgt_lp"][pos].astype(np.float64),
             "top1": am == ref["argmax"][pos], "kl": kl.clamp(min=0.0).numpy(), "argmax": am.astype(np.int32)}
+
+
+def ref_rows(logits, pos: np.ndarray, tokens: np.ndarray) -> dict:
+    """logits f32 [m, V] of positions `pos` -> the reference record's rows (fnx.eval.torchref.summarize's fields: lse,
+    top_ids / top_lp of the TOPK largest logits, tgt_lp of tokens[pos + 1], argmax = first maximal index)."""
+    x = torch.as_tensor(np.asarray(logits, np.float32))
+    lse = torch.logsumexp(x.double(), -1)
+    v, ix = torch.topk(x, TOPK, dim=-1)
+    tgt = torch.as_tensor(np.asarray(tokens, np.int64)[pos + 1])
+    return {"pos": pos.astype(np.int64), "lse": lse.numpy(), "top_ids": ix.int().numpy(),
+            "top_lp": (v.double() - lse[:, None]).float().numpy(),
+            "tgt_lp": (x.gather(1, tgt[:, None])[:, 0].double() - lse).float().numpy(),
+            "argmax": torch.argmax(x, -1).int().numpy()}
+
+
+def ref_record(rows: dict, n: int) -> dict:
+    """Concatenated ref_rows of one sequence of n tokens -> its ref/<id>.npz arrays (unscored positions: zeros, tgt_lp
+    NaN)."""
+    pos = rows["pos"]
+    out = {"lse": np.zeros(n, np.float64), "top_ids": np.zeros((n, TOPK), np.int32),
+           "top_lp": np.zeros((n, TOPK), np.float32), "tgt_lp": np.full(n, np.nan, np.float32),
+           "argmax": np.zeros(n, np.int32)}
+    for k in out:
+        out[k][pos] = rows[k]
+    return out
 
 
 def corpus_table(per: dict[str, list[dict]]) -> dict:

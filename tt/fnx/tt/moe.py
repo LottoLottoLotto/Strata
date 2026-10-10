@@ -2,7 +2,7 @@
 (two JIT kernels, fnx/tt/kernels/moe), the other routed experts on the host CPU (spec Part 6 §2, decode semantics).
 
 Per call (mixed: [1,1,rows,2560] TILE, float32 preferred or bfloat16; the first T rows are tokens):
-  device  logits = mixed @ [W_r^T | w_sg | 0] (BF16 [2560, 288], f32 out): columns 0..255 router, 256 shared gate
+  device  logits = mixed @ [W_r^T | w_sg | 0] (BF16 [2560, E + 32], E = N_EXPERT: columns 0..E-1 router, E shared gate
           (the router layout of qwen36's TTLocalMoEGate, models/common/modules/moe/tt_moe_local.py:98-107)
   host    read back [mixed | logits] once, row-major, exactly T rows (one untilize, one transfer): the one host round
           trip of the layer.  Top-10 of the device logits (stable, ties -> lower id) with near ties refined exactly
@@ -59,7 +59,7 @@ from .. import paths
 from ..config import N_EMBD, N_EXPERT, N_FF, N_LAYERS, N_USED
 
 TT_CACHE = str(paths.TT_CACHE)
-ROUTER_COLS = N_EXPERT + 32        # 256 router logits, column 256 = shared-expert gate, 31 zero columns
+ROUTER_COLS = N_EXPERT + 32        # N_EXPERT router logits, column N_EXPERT = shared-expert gate, 31 zero columns
 PRODUCT_ERR = 2.0 ** -11           # device logit error bound per unit of ||x|| ||W_e|| (module docstring)
 
 KDIR = Path(__file__).resolve().parent / "kernels" / "moe"
@@ -324,7 +324,7 @@ class Plan:
     """Host side of one Moe call (Moe.plan): routing, the device/CPU split and the running CPU-expert call."""
     T: int
     x: np.ndarray            # [T, 2560] f32 read-back MoE input
-    logits: np.ndarray       # [T, 256] device router logits
+    logits: np.ndarray       # [T, N_EXPERT] device router logits
     gate_logit: np.ndarray   # [T] shared-expert gate logit
     ids: np.ndarray          # [T, 10] routed experts (rank order)
     wt: np.ndarray           # [T, 10] route weights
@@ -351,7 +351,7 @@ class Moe:
         file FNX_EXPERT_PLACEMENT, or none)."""
         self.mesh, self.L, self.experts = mesh, L, experts
         self.cfg = _hifi4()
-        Wr = np.ascontiguousarray(w.layer(L, "ffn_gate_inp.weight"), np.float32)        # (256, 2560) BF16 values
+        Wr = np.ascontiguousarray(w.layer(L, "ffn_gate_inp.weight"), np.float32)        # (N_EXPERT, 2560) BF16 values
         wsg = w.layer(L, "ffn_gate_inp_shexp.weight").reshape(-1)
         assert Wr.shape == (N_EXPERT, N_EMBD) and wsg.shape == (N_EMBD,)
         self.wr_host = Wr                                                                  # near-tie refinement
@@ -373,7 +373,7 @@ class Moe:
         """The MoE block keeps no per-sequence state."""
 
     def select(self, x: np.ndarray, lg: np.ndarray) -> tuple[np.ndarray, int]:
-        """Top-10 of device logits lg [T,256] with exact refinement of near ties (module docstring).  x [T,2560] f32
+        """Top-10 of device logits lg [T, N_EXPERT] with exact refinement of near ties (module docstring).  x [T,2560] f32
         are the same rows.  Returns (ids [T,10] int32, number of refined rows); ids are in device-logit rank order
         (exact order among refined picks)."""
         K, E = N_USED, lg.shape[1]

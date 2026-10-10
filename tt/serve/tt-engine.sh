@@ -30,7 +30,8 @@
 set -uo pipefail
 TTDIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)      # <repo>/tt
 P=$(python3 "$TTDIR/fnx/paths.py" --shell "$@") || { echo "tt-engine: $TTDIR/fnx/paths.py --shell failed" >&2; exit 1; }
-eval "$P"                                             # DATA KCACHE LOGS IMAGE LOCK TT_METAL CPU_LIB MOUNTS
+eval "$P"                                             # MODEL DATA KCACHE LOGS IMAGE LOCK TT_METAL CPU_LIB MOUNTS
+export FNX_MODEL=$MODEL                               # the variant of --native (fnx.paths.detect_model)
 if [ ! -e "$CPU_LIB" ]; then
   echo "tt-engine: $CPU_LIB is missing: build Strata's CPU expert kernels with $TTDIR/cpu_experts/build.sh" >&2
   exit 1

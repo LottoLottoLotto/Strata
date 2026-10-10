@@ -21,7 +21,7 @@ a = ap.parse_args()
 if a.plan:
     os.environ["FNX_MOE_PLAN"] = a.plan
 
-from fnx.config import N_LAYERS  # noqa: E402
+from fnx.config import N_EXPERT, N_LAYERS  # noqa: E402
 from fnx.cpu_experts import CpuExperts  # noqa: E402
 from fnx.serve_engine import make_drafter, warm_up  # noqa: E402
 from fnx.tt import model as tmodel  # noqa: E402
@@ -45,7 +45,7 @@ try:
     model = tmodel.TtModel(mesh, w, CpuExperts(w.model, N_LAYERS, 4), max_ctx=a.ctx, verbose=False, moe="device",
                            host_reserve=reserve_items() if a.spec > 1 else 0)
     stores = [lay[3].store for lay in model.layers]
-    n_res = sum(int((~s.host[:256]).sum()) for s in stores)          # routed experts resident in DRAM
+    n_res = sum(int((~s.host[:N_EXPERT]).sum()) for s in stores)     # routed experts resident in DRAM
     resident = n_res * EXPERT_BYTES / 1e9                             # what a tiered plan's budget counts
     al, fr = dram(mesh)
     print(f"TtModel(plan {plan}, ctx {a.ctx}) in {time.time() - t0:.0f} s: allocated {al:.3f} GB, free {fr:.3f} GB; "

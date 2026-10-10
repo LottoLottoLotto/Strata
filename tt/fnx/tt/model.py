@@ -45,6 +45,7 @@ import numpy as np
 import torch
 import ttnn
 
+from .. import paths
 from ..config import HC, HC_DIM, N_EMBD, N_LAYERS, PLE_LAYER, is_qsa
 from ..ref.embed import embed
 from .gdn import Gdn
@@ -56,10 +57,13 @@ from .ple import Ple
 from .qsa import Qsa
 
 DEFAULT_MOE = "device"                 # FNX_MOE: "device" | "cpu" (= fnx.serve_engine.DEFAULT_MOE; quality gate 2026-10-07)
-DEFAULT_PLAN = "bfp4-tiered-2.4e+10"   # FNX_MOE_PLAN: fnx.quant.store plan of the device experts (GPTQ-BFP4; 24.0e9 B,
-                                       # 8680 experts resident = 85.9% of routings).  Serving at 32K + MTP drafter + traces
-                                       # leaves 1.52 GB DRAM free (tools/dram_budget.py, 480 MiB trace region).  Same
-                                       # numerics as 2.2e+10 (placement only); T=1 41.2 -> 38.8 ms, MTP +6..9% (2026-10-07)
+# FNX_MOE_PLAN default per variant (fnx.paths.MODEL): the fnx.quant.store plan of the device experts.
+# coder: GPTQ-BFP4; 24.0e9 B, 8680 experts resident = 85.9% of routings.  Serving at 32K + MTP drafter + traces leaves
+#   1.52 GB DRAM free (tools/dram_budget.py, 480 MiB trace region).  Same numerics as 2.2e+10 (placement only); T=1
+#   41.2 -> 38.8 ms, MTP +6..9% (2026-10-07).
+# iq3s: data-free BFP4 (fnx.quant.datafree: no calibration GPU), resident = the hottest of Strata's routing profile.
+DEFAULT_PLANS = {"coder": "bfp4-tiered-2.4e+10", "iq3s": "search4-tiered-2.4e+10"}
+DEFAULT_PLAN = DEFAULT_PLANS[paths.MODEL]
 
 
 def moe_mode(v: str | None = None) -> str:

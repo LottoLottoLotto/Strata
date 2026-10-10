@@ -1,5 +1,8 @@
-"""Qwen3.8-Flash-Next geometry (Coder IQ1_M), as Strata hard-codes it (spec Part 1 §1); checked against GGUF metadata."""
+"""Qwen3.8-Flash-Next geometry, as Strata hard-codes it (spec Part 1 §1); checked against GGUF metadata.  Only the
+routed-expert count differs between the variants (fnx.paths.VARIANTS: FNX_MODEL)."""
 from __future__ import annotations
+
+from . import paths
 
 N_EMBD = 2560
 N_LAYERS = 48
@@ -28,8 +31,8 @@ IDX_DIM = 128
 IDX_TOP_K = 2048
 COMPRESS = 4
 
-# MoE (Coder: 256 of the original 512 experts kept)
-N_EXPERT = 256
+# MoE (the Coder keeps 256 of the full model's 512 experts)
+N_EXPERT = paths.N_EXPERT
 N_USED = 10
 N_FF = 640
 
@@ -66,4 +69,5 @@ def check_metadata(md: dict) -> None:
     }
     bad = [f"{k}: GGUF {md.get(k)!r}, expected {v!r}" for k, v in want.items() if md.get(k) != v]
     if bad:
-        raise ValueError("GGUF metadata differs from the Flash-Next geometry: " + "; ".join(bad))
+        raise ValueError(f"GGUF metadata differs from the Flash-Next geometry of FNX_MODEL={paths.MODEL}: "
+                         + "; ".join(bad))

@@ -93,12 +93,12 @@ def local(data: Path, rel: str) -> Path:
 
 
 def default_plan() -> str:
-    """DEFAULT_PLAN of fnx/tt/model.py (read from the source: the module needs ttnn)."""
+    """The Coder's DEFAULT_PLANS entry of fnx/tt/model.py (read from the source: the module needs ttnn)."""
     for node in ast.parse((TT / "fnx" / "tt" / "model.py").read_text()).body:
         targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
-        if any(isinstance(t, ast.Name) and t.id == "DEFAULT_PLAN" for t in targets):
-            return ast.literal_eval(node.value)
-    fail("no DEFAULT_PLAN in fnx/tt/model.py")
+        if any(isinstance(t, ast.Name) and t.id == "DEFAULT_PLANS" for t in targets):
+            return ast.literal_eval(node.value)["coder"]
+    fail("no DEFAULT_PLANS in fnx/tt/model.py")
 
 
 def load_manifest(path: Path) -> dict:

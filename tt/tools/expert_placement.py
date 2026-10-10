@@ -37,9 +37,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))          # tt/: import fnx
 from fnx import paths  # noqa: E402
+from fnx.config import N_EXPERT, N_LAYERS  # noqa: E402
 
 GOLDEN = paths.GOLDEN
-N_LAYERS, N_EXPERT, TILES = 48, 256, 3 * 20 * 80
+TILES = 3 * 20 * 80
 TILE_BYTES = {"bfloat8_b": 1088, "bfloat4_b": 576, "bfloat16": 2048}
 
 
@@ -155,7 +156,7 @@ def main() -> int:
            "per_layer": {"min": int(counts.min()), "median": int(np.median(counts)), "max": int(counts.max())},
            "golden": {g: score(mask, *r) for g, r in golden.items()},
            "layers": [np.nonzero(mask[l])[0].tolist() for l in range(N_LAYERS)]}
-    out = a.out or paths.CACHE / "placement" / f"coder-{a.dtype}-{n}.json"
+    out = a.out or paths.CACHE / "placement" / f"{paths.MODEL}-{a.dtype}-{n}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res))
     print(f"{n} experts ({n * per_expert / 1e9:.2f} GB {a.dtype}; free {free:.2f} GB - headroom {a.headroom_gb} GB - MTP {a.mtp_gb} GB), "

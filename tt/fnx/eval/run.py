@@ -25,6 +25,10 @@ exactly as served (MTP verify windows, traced decode: bitwise the plain greedy t
 answers to runs/NAME/gsm8k.jsonl.  The reference answers come from Strata's CUDA engine on the RTX 3090
 (fnx.eval.strata_ref), not from the float reference (a token-by-token float32 decode is too slow).
 Every run ends with runs/NAME/results.json + results.md over everything stored for NAME.
+--write-ref (a variant without fnx.eval.torchref's float reference, e.g. FNX_MODEL=iq3s: no CUDA host): the teacher
+forcing of --config writes the reference itself, FNX_EVAL/ref/<id>.npz (score.ref_rows) + ref/meta.json, instead of
+scoring against it; use the near-exact cpu config (Strata's CPU kernels on the GGUF experts: KL .008 from float32 on
+the Coder), then score the other configs as usual.
 """
 from __future__ import annotations
 
@@ -72,7 +76,8 @@ def read_jsonl(p: Path) -> list[dict]:
 
 
 # ------------------------------------------------------------------------------------------------ device phases
-def teacher_force(model, recs, out: Path, deadline: float) -> None:
+def teacher_force(model, recs, out: Path, deadline: float, make_ref: bool = False) -> None:
+    """Score `recs` into out/<id>.npz, or (make_ref) write their reference records there."""
     out.mkdir(parents=True, exist_ok=True)
     for r in recs:
         p = out / f"{r['id']}.npz"
@@ -85,7 +90,7 @@ def teacher_force(model, recs, out: Path, deadline: float) -> None:
         n = len(toks)
         need = np.zeros(n, bool)
         need[score.targets(r) - 1] = True
-        ref = score.load_ref(r["id"])
+        ref = None if make_ref else score.load_ref(r["id"])
         model.reset()
         t0 = time.time()
         parts = []
@@ -96,9 +101,14 @@ def teacher_force(model, recs, out: Path, deadline: float) -> None:
                 model.forward(toks[c0:c1], head=False)
                 continue
             logits, _ = model.forward(toks[c0:c1])
-            parts.append(score.score_rows(logits[pos - c0], pos, toks, ref))
+            parts.append(score.ref_rows(logits[pos - c0], pos, toks) if make_ref else
+                         score.score_rows(logits[pos - c0], pos, toks, ref))
         m = {k: np.concatenate([x[k] for x in parts]) for k in parts[0]}
         dt = time.time() - t0
+        if make_ref:
+            np.savez(p, **score.ref_record(m, n))
+            log(f"{r['id']}: reference, {n} tokens in {dt:.1f} s ({n / dt:.1f} tok/s), {len(m['pos'])} positions")
+            continue
         np.savez(p, seconds=dt, load=os.getloadavg()[0], **m)
         log(f"{r['id']}: {n} tokens in {dt:.1f} s ({n / dt:.1f} tok/s), {len(m['nll'])} scored: "
             f"dNLL {m['nll'].mean() - m['nll_ref'].mean():+.4f}, top-1 {m['top1'].mean():.4f}, KL {m['kl'].mean():.4f}")
@@ -160,7 +170,14 @@ def device_run(a, env: dict) -> None:
         recs = [r for r in recs if r["corpus"] in a.corpus.split(",")]
     if a.records:
         recs = [r for r in recs if r["id"] in a.records.split(",")]
-    todo_tf = [] if a.no_tf else [r for r in recs if not (run / "tf" / f"{r['id']}.npz").exists()]
+    tf_dir = data.EVAL / "ref" if a.write_ref else run / "tf"
+    if a.write_ref:
+        tf_dir.mkdir(parents=True, exist_ok=True)
+        (tf_dir / "meta.json").write_text(json.dumps({
+            "source": "fnx.eval.run --write-ref (a TT configuration's logits, not a float32 model)", "model": paths.MODEL,
+            "config": a.config, "env": env, "K": score.TOPK, "evalset_sha256": data.sha256(data.EVAL / "evalset.jsonl")},
+            indent=1))
+    todo_tf = [] if a.no_tf else [r for r in recs if not (tf_dir / f"{r['id']}.npz").exists()]
     todo_gsm = a.gsm and len({r["idx"] for r in read_jsonl(run / "gsm8k.jsonl")} & set(range(a.gsm))) < a.gsm
     if not todo_tf and not todo_gsm:
         log("nothing to run")
@@ -175,7 +192,7 @@ def device_run(a, env: dict) -> None:
                         host_reserve=reserve_items() if todo_gsm and a.spec > 1 else 0)   # the drafter's host items
         log(f"config {a.config} {env}: TtModel built in {time.time() - t0:.0f} s")
         if todo_tf:
-            teacher_force(model, todo_tf, run / "tf", deadline)
+            teacher_force(model, todo_tf, tf_dir, deadline, make_ref=a.write_ref)
         if todo_gsm:
             gsm8k(mesh, w, model, a.gsm, run / "gsm8k.jsonl", deadline, a.spec)
     finally:
@@ -257,6 +274,8 @@ def main(argv=None) -> int:
     ap.add_argument("--max-minutes", type=float, default=10.0,
                     help="start no new record / problem after this (the device is shared: keep runs short)")
     ap.add_argument("--threads", type=int, default=16)
+    ap.add_argument("--write-ref", action="store_true",
+                    help="write FNX_EVAL/ref from this config's teacher forcing (module docstring)")
     ap.add_argument("--report", default="", help="comma list of configs: print their tables (no device)")
     a = ap.parse_args(argv)
     if a.report:
@@ -273,6 +292,9 @@ def main(argv=None) -> int:
         ap.error("--config NAME (or --report)")
     env = config_env(a.config, a.env)
     device_run(a, env)
+    if a.write_ref:
+        print(f"reference records: {len(list((data.EVAL / 'ref').glob('*.npz')))} of {len(data.load())}")
+        return 0
     res = results(a.config)
     print((RUNS / a.config / "results.md").read_text())
     return 0 if res else 1

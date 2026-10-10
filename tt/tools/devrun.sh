@@ -14,7 +14,8 @@
 set -uo pipefail
 TTDIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)      # <repo>/tt
 P=$(python3 "$TTDIR/fnx/paths.py" --shell "$@") || { echo "devrun: $TTDIR/fnx/paths.py --shell failed" >&2; exit 1; }
-eval "$P"                                             # DATA KCACHE LOGS IMAGE LOCK TT_METAL CPU_LIB MOUNTS
+eval "$P"                                             # MODEL DATA KCACHE LOGS IMAGE LOCK TT_METAL CPU_LIB MOUNTS
+export FNX_MODEL=$MODEL                               # FNX_MODEL, else the variant of a --native argument or FNX_GGUF
 if [ -z "${NODEV:-}" ] && [ -z "${FNX_DEVICE_LOCKED:-}" ]; then
   mkdir -p "$(dirname "$LOCK")"
   exec env FNX_DEVICE_LOCKED=1 flock "$LOCK" "$0" "$@"

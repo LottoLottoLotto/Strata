@@ -1,4 +1,4 @@
-"""All-device MoE block on the P150: router, top-10, routed experts (all 256 of the layer, in a block-float format
+"""All-device MoE block on the P150: router, top-10, routed experts (all N_EXPERT of the layer, in a block-float format
 chosen per matrix, in device DRAM or - the host tier - in pinned host memory the kernels read over PCIe), shared
 expert and combine, with no host round trip, so a decode step can run as one trace.  Same API as fnx.tt.moe.Moe:
 `MoeDevice(mesh, w, L, ...).forward(mixed) -> bo`.
@@ -10,7 +10,7 @@ Per call (mixed [1, 1, T, 2560] f32 TILE; T <= 32 rows per device round, larger 
              the softmax over the 10 selected logits and sigmoid(shared gate) in fixed point (topk.h, rel. error
              ~1e-7) into a [32, 32] int32 route buffer
   2. stage A (gu_*.cpp, every worker core): selection = union of the T rows' experts (ascending id) + the shared
-             expert (entry 256, last); work unit (entry s, intermediate tile j): h[s][j] = SiLU(x G_e[:, j]) *
+             expert (entry N_EXPERT, last); work unit (entry s, intermediate tile j): h[s][j] = SiLU(x G_e[:, j]) *
              (x U_e[:, j]) * route_s (per row; 0 for rows that did not pick e), BF16 x, FP32 DEST, one BF16 rounding;
              bfp4/bfp2 matmuls at HiFi3 (exact weights in SrcA; LoFi would truncate x: 8.8e-3 vs 1.0e-3 against the
              f64 emulation, same device time), bfp8/bf16 (shared expert) at HiFi4
@@ -35,7 +35,7 @@ every captured trace may read it.
 bfloat2_b has no ttnn DataType: the stores are raw int32 pages and the kernels program the unpacker per matrix
 (kernels/moe_device/fmt.h).  Sources: `rtn_layer` (round-to-nearest of the GGUF dequantized experts, formats from a
 per-layer plan) or `quant_layer` (ExpertQuant's GPTQ store, fnx.quant.store.Plan, read straight from its pool rows: no
-converted copy on disk).  The shared expert is entry 256 (bf16 by default, always resident).
+converted copy on disk).  The shared expert is entry N_EXPERT (bf16 by default, always resident).
 """
 from __future__ import annotations
 
@@ -78,8 +78,8 @@ TIER_PAGED = 2 << 28                   # tier 2: a paged host pool item, read th
 ENT_PAGE = 640                         # entry page bytes (common.h ENT_WORDS: route row + TOPK + 1 table entries)
 
 
-# sizes that depend on the number of routed experts n_exp (common.h, FNX_N_EXP: 256 = the main layers, 512 = the MTP
-# drafter's MoE; a multiple of 32: the router computes (n_exp + 32) / 32 logits column tiles)
+# sizes that depend on the number of routed experts n_exp (common.h, FNX_N_EXP: N_EXPERT = the main layers, 512 = the
+# MTP drafter's MoE; a multiple of 32: the router computes (n_exp + 32) / 32 logits column tiles)
 def table_words(n_exp: int = N_EXPERT) -> int:
     """Expert table words (TABLE_STRIDE per entry, n_exp + 1 entries), padded to a 64 B multiple."""
     return -(-TABLE_STRIDE * (n_exp + 1) // 16) * 16
@@ -93,14 +93,18 @@ def sel_bytes(n_exp: int = N_EXPERT) -> int:
 TMP_BYTES = 16384                      # page table scratch of paged host reads (common.h)
 
 
+KERNEL_N_EXP = 256                     # common.h's FNX_N_EXP default
+
+
 def _defines(n_exp: int) -> list:
-    """Kernel defines of a store of n_exp routed experts (none for the default count: the kernels' own default), plus
-    MD_PROF=1 (device-profiler zones, kernels/moe_device/prof.h) with FNX_MD_PROF=1 and TT_METAL_DEVICE_PROFILER=1."""
-    d = [] if n_exp == N_EXPERT else [("FNX_N_EXP", str(n_exp))]
+    """Kernel defines of a store of n_exp routed experts (none for common.h's default count, so those programs keep
+    their hashes), plus MD_PROF=1 (device-profiler zones, kernels/moe_device/prof.h) with FNX_MD_PROF=1 and
+    TT_METAL_DEVICE_PROFILER=1."""
+    d = [] if n_exp == KERNEL_N_EXP else [("FNX_N_EXP", str(n_exp))]
     return d + ([("MD_PROF", "1")] if os.environ.get("FNX_MD_PROF") == "1" else [])
 
 
-TABLE_WORDS, SEL_BYTES = table_words(), sel_bytes()    # 2320, 22656 (256 experts)
+TABLE_WORDS, SEL_BYTES = table_words(), sel_bytes()    # the main layers' (256 experts: 2320, 22656)
 
 
 def matrix_bytes(fmt: int) -> int:
@@ -170,10 +174,10 @@ def tiles_to_float(tiles: np.ndarray, K: int, N: int, fmt: int) -> np.ndarray:
 # ------------------------------------------------------------------------------------------------ layer sources
 @dataclass
 class LayerMatrices:
-    """One layer's expert matrices for the device store: fmt [257, 3] format codes (entry 256 = shared expert;
-    m = gate, up, down), tiles(e, m) -> the matrix's TILE byte stream (W^T [K, N], tiles row-major), optionally
+    """One layer's expert matrices for the device store: fmt [N_EXPERT + 1, 3] format codes (the last entry = shared
+    expert; m = gate, up, down), tiles(e, m) -> the matrix's TILE byte stream (W^T [K, N], tiles row-major), optionally
     rows(e, m) -> its fnx.quant store row (block-float formats; ExpertStore then converts whole batches at once), and
-    host: bool [257] (None: none) - the experts kept in pinned host memory (read over PCIe) instead of device DRAM."""
+    host: bool [N_EXPERT + 1] (None: none) - the experts kept in pinned host memory (read over PCIe) instead of DRAM."""
     fmt: np.ndarray
     tiles: Callable[[int, int], np.ndarray]
     rows: Callable[[int, int], np.ndarray] | None = None
@@ -186,7 +190,7 @@ def shared_tiles(w, L: int, m: int, fmt: int) -> np.ndarray:
 
 
 def rtn_layer(w, L: int, fmt: np.ndarray, shared_fmt: int = F_BF16) -> LayerMatrices:
-    """Round-to-nearest store of layer L from the GGUF dequantized experts; fmt [256, 3] (or [256]) format codes."""
+    """Round-to-nearest store of layer L from the GGUF dequantized experts; fmt [N_EXPERT, 3] (or [N_EXPERT]) codes."""
     fmt = np.asarray(fmt, np.int32)
     if fmt.ndim == 1:
         fmt = np.repeat(fmt[:, None], 3, 1)
@@ -203,11 +207,11 @@ def rtn_layer(w, L: int, fmt: np.ndarray, shared_fmt: int = F_BF16) -> LayerMatr
 
 def quant_layer(w, L: int, plan, shared_fmt: int = F_BF16, host: np.ndarray | None = None) -> LayerMatrices:
     """ExpertQuant's GPTQ store (fnx.quant.store.Plan): its per-matrix bfp4/bfp2 choice and snapped rows; the host
-    tier is the plan's non-resident experts (Plan.resident) unless `host` (bool [256]) overrides it."""
-    fq = np.asarray(plan.fmt(L), np.int32)                            # [256, 3]: 4 | 2 bits
+    tier is the plan's non-resident experts (Plan.resident) unless `host` (bool [N_EXPERT]) overrides it."""
+    fq = np.asarray(plan.fmt(L), np.int32)                            # [N_EXPERT, 3]: 4 | 2 bits
     code = np.where(fq == 4, F_BFP4, np.where(fq == 2, F_BFP2, -1))
     if code.shape != (N_EXPERT, 3) or (code < 0).any():
-        raise ValueError(f"plan layer {L}: not [256, 3] bfp4/bfp2 formats")
+        raise ValueError(f"plan layer {L}: not [{N_EXPERT}, 3] bfp4/bfp2 formats")
     full = np.concatenate([code, np.full((1, 3), shared_fmt, np.int32)])
     hm = ~np.asarray(plan.resident(L), bool) if host is None else np.asarray(host, bool)
 
@@ -220,7 +224,7 @@ def quant_layer(w, L: int, plan, shared_fmt: int = F_BF16, host: np.ndarray | No
 
 
 def profile_plan(L: int, n_bfp4: int, profile=None) -> np.ndarray:
-    """[256] format codes: layer L's n_bfp4 hottest experts (Strata's Coder profile) bfp4, the rest bfp2."""
+    """[N_EXPERT] format codes: layer L's n_bfp4 hottest experts (Strata's profile of the model) bfp4, the rest bfp2."""
     import struct
     path = Path(profile or paths.EXPERT_PROFILE)
     b = path.read_bytes()
