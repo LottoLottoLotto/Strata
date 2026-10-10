@@ -162,6 +162,10 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   ta-bench.log, traced plain 30.6 / 29.1 / 25.8, MTP 47.0 / 51.0 / 49.7 tok/s, T=1 37.54 ms, T=4 58.16 ms; test_serve
   PASS 17/17 through serve/tt-engine.sh with explicit model args (P3 decode 47.6 tok/s, H0 ready after 108 s).
 - Quality configs in `fnx/eval/run.py`: `cpu`, `bfp8` (both FNX_MOE=cpu), `device-gptq`.
+- Data-free BFP4 (`fnx.quant.datafree`, no calibration) gated on the Coder 2026-10-10 (run `device-search4`, plan
+  search4-tiered-2.4e+10 in a scratch FNX_QUANT_DIR, since deleted): all dPPL +0.38% (GPTQ +0.09%), chat +2.04%
+  (+0.37%), code -0.27% (-0.18%), top-1 .927 (.937), KL .0475 (.038; limit .057), GSM8K-50 44/50 (Strata 44/50).  The
+  Coder keeps GPTQ; data-free is the iq3s variant's device store (no CUDA host for GPTQ).
 - Default expert plan `bfp4-tiered-2.4e+10` (fnx/tt/model.py DEFAULT_PLAN): 8680 resident experts (24.0e9 B, 85.9% of
   routings). Size any new default with `tools/devrun.sh dram tools/dram_budget.py [--plan P]` (serving-exact build: 32K
   ctx, MTP drafter, warm-up, traces; prints the budget that keeps 1.5 GB free). Trace region 480 MiB (FNX_TRACE_MB;
