@@ -4,7 +4,19 @@ Package `fnx` at `tt/fnx` of the Strata repository (branch tt-p150; `import fnx`
 on the device with `tt/tools/devrun.sh`, from `tt/`).  Paths below without a root are relative to `tt/`.
 Model: Qwen3.8-Flash-Next Coder IQ1_M GGUF (the engine: its `--native` / `--ple-gguf` arguments; tests and tools:
 `fnx.paths.SHARD1/SHARD2`, `FNX_DATA/models/coder/`).  `Model.available(name[, expert])` reports holes of a file still
-downloading.
+downloading.  Second variant (`FNX_MODEL=iq3s`, below): the full model's IQ3_S GGUF (512 routed experts per layer).
+
+Model variants (`fnx.paths.VARIANTS`; FNX_MODEL, else read off the `--native` / FNX_GGUF file name, else "coder";
+`paths.py --shell` prints it as MODEL and tt-engine.sh / devrun.sh export it): coder = IQ1_M, 256 experts,
+`data/expert-profile-coder.bin`; iq3s = IQ3_S, 512 experts, `data/expert-profile.bin`.  Only `config.N_EXPERT`
+differs in the geometry (`check_metadata` refuses a GGUF of the other variant).  Per-variant data: models/<model>/,
+packs/<coder-iq1_m | iq3_s>, and for iq3s quant-iq3s/, cache/tt-iq3s, golden-iq3s/, eval-iq3s/ (the Coder's keep
+quant/, cache/tt, golden/, eval/; cache/dequant is per GGUF stem; kcache and mtp/ are shared: the drafter is the full
+model's MTP layer for both).  Shard 2 (the PLE table, sha256 316b46f3...) is the same file for every quant: the dev
+host hardlinks the Coder's.  The tokenizer and chat template are byte-identical, so eval-iq3s reuses the Coder's
+evalset.jsonl / gsm8k.jsonl.  iq3s has no GPTQ store (no CUDA GPU on the host): its device plans come from
+`fnx.quant.datafree` (search-BFP4 rows of the GGUF values + profile-ranked residency, `search4-tiered-<budget>`), and
+its quality reference is the cpu configuration's own teacher forcing (`fnx.eval.run --write-ref`).
 
 Specification: `/home/lotto/.omp/agent/sessions/-tmp/2026-10-02T13-24-24-920Z_01a0fcc9-96d8-7578-b42f-1cffdb5ac6d2/local/flashnext-spec.md`
 (`local://flashnext-spec.md`; Part 1 loading, 2 embedding+PLE, 3 HC+head, 4 GDN, 5 QSA, 6 MoE, 7 sampler+MTP,

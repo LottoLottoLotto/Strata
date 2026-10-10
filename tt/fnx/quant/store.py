@@ -107,6 +107,8 @@ def write_plan(name: str, fmt: np.ndarray, meta: dict, root: Path | str = STORE,
         row = np.full((N_EXPERT, 3), -1, np.int32)
         for bits in (4, 2):
             m = fmt[L] == bits
+            if not m.any():                       # a format the layer does not use needs no pool file
+                continue
             ix = pool.index(L, bits)
             if (ix[m] < 0).any():
                 miss = np.argwhere(m & (ix < 0))
