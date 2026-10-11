@@ -56,7 +56,8 @@ import torch
 import ttnn
 
 from .. import paths
-from ..config import N_EMBD, N_EXPERT, N_FF, N_LAYERS, N_USED
+from ..config import N_EMBD, N_EXPERT, N_FF, N_LAYERS
+from ..cpu_experts import route
 
 TT_CACHE = str(paths.TT_CACHE)
 ROUTER_COLS = N_EXPERT + 32        # N_EXPERT router logits, column N_EXPERT = shared-expert gate, 31 zero columns
@@ -98,33 +99,57 @@ def load_placement(path: str | os.PathLike) -> list[np.ndarray]:
     return layers
 
 
-_PLACEMENT: dict[str, list[np.ndarray]] = {}
-# the cpu MoE's resident experts per variant when FNX_EXPERT_PLACEMENT is unset: the N hottest (layer, expert) pairs of
-# Strata's profile, bfloat8_b (= tools/expert_placement.py --measure: free DRAM after the model - 3 GB headroom -
-# 0.5 GB MTP drafter; iq3s 2026-10-10).  The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is
-# the device one).
-DEFAULT_RESIDENT = {"coder": 0, "iq3s": 4671}
+_PLACEMENT: dict[str, tuple[list[np.ndarray], str]] = {}
+# the cpu MoE's resident experts per variant when FNX_EXPERT_PLACEMENT is unset: (N, dtype) = the N hottest (layer,
+# expert) pairs by the variant's measured routing counts (FNX_QUANT_DIR/stats, tools/route_counts.py) in that format
+# (N = tools/expert_placement.py --measure --dtype: free DRAM after the model - 3 GB headroom - 0.5 GB MTP drafter).
+# The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is the device one).
+DEFAULT_RESIDENT = {"coder": (0, "bfloat8_b"), "iq3s": (4671, "bfloat8_b")}
+
+
+def _placement() -> tuple[list[np.ndarray], str]:
+    """(per-layer sorted resident ids, ttnn dtype name): the placement file FNX_EXPERT_PLACEMENT (its "dtype",
+    default bfloat8_b; set but empty: none), else the variant's DEFAULT_RESIDENT by measured routing counts."""
+    p = os.environ.get("FNX_EXPERT_PLACEMENT")
+    if p is None:
+        n, dt = DEFAULT_RESIDENT[paths.MODEL]
+        p = f"counts:{n}:{dt}"
+        if p not in _PLACEMENT:
+            if n:
+                from ..quant.datafree import read_counts
+                top = read_counts()[:n]
+                layers = [np.sort(top[top[:, 0] == l, 1]).astype(np.int32) for l in range(N_LAYERS)]
+            else:
+                layers = [np.zeros(0, np.int32)] * N_LAYERS
+            _PLACEMENT[p] = (layers, dt)
+    elif not p:
+        return [np.zeros(0, np.int32)] * N_LAYERS, "bfloat8_b"
+    if p not in _PLACEMENT:
+        _PLACEMENT[p] = (load_placement(p), json.loads(Path(p).read_text()).get("dtype", "bfloat8_b"))
+    return _PLACEMENT[p]
 
 
 def default_resident(L: int) -> np.ndarray:
-    """Layer L's resident experts: the placement file FNX_EXPERT_PLACEMENT (set but empty: none), else the variant's
-    DEFAULT_RESIDENT hottest pairs of Strata's profile (fnx.paths.EXPERT_PROFILE)."""
-    p = os.environ.get("FNX_EXPERT_PLACEMENT")
-    if p is None:
-        n = DEFAULT_RESIDENT[paths.MODEL]
-        if not n:
-            return np.zeros(0, np.int32)
-        p = f"profile:{n}"
-        if p not in _PLACEMENT:
-            from ..quant.datafree import read_profile
-            top = read_profile()[:n]
-            _PLACEMENT[p] = [np.sort(top[top[:, 0] == l, 1]).astype(np.int32) for l in range(N_LAYERS)]
-        return _PLACEMENT[p][L]
-    if not p:
-        return np.zeros(0, np.int32)
-    if p not in _PLACEMENT:
-        _PLACEMENT[p] = load_placement(p)
-    return _PLACEMENT[p][L]
+    """Layer L's resident experts (_placement)."""
+    return _placement()[0][L]
+
+
+def resident_dtype():
+    """The resident experts' ttnn dtype (_placement: bfloat8_b, or bfloat4_b = min-MSE-snapped BFP4)."""
+    dt = _placement()[1]
+    if dt not in ("bfloat8_b", "bfloat4_b"):
+        raise ValueError(f"resident expert dtype {dt!r}: bfloat8_b or bfloat4_b")
+    return getattr(ttnn, dt)
+
+
+def snap_bfp4(a: np.ndarray, rows: int = 32768) -> np.ndarray:
+    """a f32 [R, C] (C % 16 == 0) -> its min-MSE BFP4 values over ttnn's blocks (16 consecutive elements of a row;
+    fnx.quant.methods.blockq), in place, row chunks (bounded temporaries).  tt-metal's bfloat4_b conversion keeps
+    them exactly."""
+    from ..quant import methods
+    for r0 in range(0, a.shape[0], rows):
+        a[r0:r0 + rows] = methods.blockq(torch.from_numpy(a[r0:r0 + rows]), "bfp4").numpy()
+    return a
 
 
 def _tile_bytes(dtype) -> int:
@@ -214,6 +239,8 @@ class DeviceExperts:
     mesh None: host-only conversion of the weight caches."""
 
     def __init__(self, mesh, w, L: int, resident, routed_dtype=ttnn.bfloat8_b, fidelity=ttnn.MathFidelity.HiFi4):
+        """routed_dtype bfloat4_b: the experts' values are first snapped to their min-MSE BFP4 grid (snap_bfp4),
+        which tt-metal's conversion then keeps (its own round-to-nearest BFP4 has the larger error)."""
         self.mesh, self.L, self.fidelity = mesh, L, fidelity
         self.resident = np.asarray(sorted(int(e) for e in resident), np.int32)
         n = len(self.resident)
@@ -237,6 +264,10 @@ class DeviceExperts:
                 a[i * N_EMBD:(i + 1) * N_EMBD] = model.get_expert(f"blk.{L}.ffn_down_exps.weight", int(e))
             return a
 
+        if routed_dtype == ttnn.bfloat4_b:
+            raw_gu, raw_dn = gate_up, down
+            gate_up, down = (lambda: snap_bfp4(raw_gu())), (lambda: snap_bfp4(raw_dn()))
+            tag += "-s4"
         self.gu = _weight(mesh, f"blk.{L}.ffn_gate_up_exps.n{n}-{tag}", gate_up, routed_dtype)
         self.dn = _weight(mesh, f"blk.{L}.ffn_down_exps.n{n}-{tag}", down, routed_dtype)
         self.dtype = routed_dtype
@@ -348,23 +379,18 @@ class Plan:
     refined: int
     parts: np.ndarray | None = None   # [T, 10, 2560] being filled by CpuExperts.submit (None: no CPU slot)
     dev: object = None       # the layer's DeviceExperts (None: none resident)
+    words: np.ndarray | None = None   # with plan(s_cap=...): the device-expert metadata row (DeviceExperts.meta_words)
 
     @property
     def on_dev(self) -> np.ndarray:
         return self.loc >= 0
 
-    def meta_words(self, s_cap: int | None = None):
-        """The device-expert metadata row of this call (one round: T <= 32 * GMAX), padded to s_cap entries; a call
-        without device slots gets the zero-weight dummy entry.  Returns (words uint32, S, s_cap)."""
-        ent, route, starts = DeviceExperts.entries(self.T, self.loc, self.wt)
-        return DeviceExperts.meta_words(self.T, ent, route, starts, s_cap=s_cap)
-
 
 class Moe:
     def __init__(self, mesh, w, L: int, experts, shared_dtype=ttnn.bfloat8_b, resident=None,
-                 routed_dtype=ttnn.bfloat8_b, fidelity=ttnn.MathFidelity.HiFi4):
+                 routed_dtype=None, fidelity=ttnn.MathFidelity.HiFi4):
         """resident: expert ids of layer L to keep on the device (default: default_resident(L), i.e. the placement
-        file FNX_EXPERT_PLACEMENT, or none)."""
+        file FNX_EXPERT_PLACEMENT, else the variant's default); routed_dtype: theirs (default resident_dtype())."""
         self.mesh, self.L, self.experts = mesh, L, experts
         self.cfg = _hifi4()
         Wr = np.ascontiguousarray(w.layer(L, "ffn_gate_inp.weight"), np.float32)        # (N_EXPERT, 2560) BF16 values
@@ -381,41 +407,13 @@ class Moe:
         self.wu = _weight(mesh, f"blk.{L}.ffn_up_shexp.weight", w.layer(L, "ffn_up_shexp.weight").T, sd)
         self.wd = _weight(mesh, f"blk.{L}.ffn_down_shexp.weight", w.layer(L, "ffn_down_shexp.weight").T, sd)
         res = default_resident(L) if resident is None else np.asarray(resident, np.int32)
+        routed_dtype = resident_dtype() if routed_dtype is None else routed_dtype
         self.dev = DeviceExperts(mesh, w, L, res, routed_dtype=routed_dtype, fidelity=fidelity) if len(res) else None
         self.local = self.dev.local if self.dev else np.full(N_EXPERT, -1, np.int32)
         self.last: dict = {}
 
     def reset(self) -> None:
         """The MoE block keeps no per-sequence state."""
-
-    def select(self, x: np.ndarray, lg: np.ndarray) -> tuple[np.ndarray, int]:
-        """Top-10 of device logits lg [T, N_EXPERT] with exact refinement of near ties (module docstring).  x [T,2560] f32
-        are the same rows.  Returns (ids [T,10] int32, number of refined rows); ids are in device-logit rank order
-        (exact order among refined picks)."""
-        K, E = N_USED, lg.shape[1]
-        order = np.argsort(-lg, axis=-1, kind="stable")                  # descending, ties -> lower id
-        ids = order[:, :K].astype(np.int32)
-        b = (PRODUCT_ERR * np.sqrt((x * x).sum(axis=1, dtype=np.float64)))[:, None] * self.wr_norm[None, :]
-        lo, hi = lg - b, lg + b
-        ups = np.partition(hi, E - K - 1, axis=1)[:, E - K - 1, None]    # 11th largest upper bound
-        sure_in = lo > ups
-        todo = np.nonzero(sure_in.sum(axis=1) < K)[0]
-        if len(todo):
-            tau = np.partition(lo, E - K, axis=1)[:, E - K, None]        # 10th largest lower bound
-            for t in todo:
-                ins = order[t][sure_in[t][order[t]]]                      # surely in, device order
-                amb = np.nonzero(~sure_in[t] & (hi[t] >= tau[t]))[0]     # undecided
-                exact = (self.wr_host[amb].astype(np.float64) @ x[t].astype(np.float64)).astype(np.float32)
-                pick = amb[np.lexsort((amb, -exact))][:K - len(ins)]     # exact descending, ties -> lower id
-                ids[t] = np.concatenate([ins, pick])
-        return ids, len(todo)
-
-    @staticmethod
-    def weights(lg: np.ndarray, ids: np.ndarray) -> np.ndarray:
-        """Route weights [T,10] f32 of ids: softmax over their device logits in f64 (module docstring)."""
-        sl = np.take_along_axis(lg, ids, axis=1).astype(np.float64)
-        ex = np.exp(sl - sl.max(axis=1, keepdims=True))
-        return (ex / ex.sum(axis=1, keepdims=True)).astype(np.float32)
 
     # ---- the call in parts: pre / shared / experts (device only, capture-safe), plan / finish (host), post (device)
     def pre(self, mixed, T: int | None = None) -> dict:
@@ -431,21 +429,19 @@ class Moe:
         xb = self.dev.prepare(x, rows) if self.dev else None
         return dict(x=x, logits=logits, both=both, xb=xb, rows=rows, T=T)
 
-    def plan(self, host: np.ndarray) -> Plan:
-        """Host: read-back rows [T, 2560 + 288] -> routing, the device/CPU split, and the CPU experts submitted to
-        libfnx_cpu's leader thread as soon as the ids are known (the weights are computed while they run)."""
+    def plan(self, host: np.ndarray, s_cap: int | None = None) -> Plan:
+        """Host: read-back rows [T, 2560 + N_EXPERT + 32] -> routing (fnx.cpu_experts.route, libfnx_cpu's
+        fnx_route.cpp: top-10 of the device logits with exact refinement of near ties, module docstring; f64 softmax
+        weights over the 10 picks), the device/CPU split, and the CPU experts submitted to libfnx_cpu's leader thread.
+        s_cap (T <= 32, resident experts): also the device experts' metadata row padded to s_cap entries (words)."""
         T = host.shape[0]
         xh = np.ascontiguousarray(host[:, :N_EMBD])
         lg = np.ascontiguousarray(host[:, N_EMBD:N_EMBD + N_EXPERT])
-        ids, n_refined = self.select(xh, lg)
-        loc = self.local[ids]
-        parts = None
-        if self.dev is None:
-            parts = self.experts.submit(self.L, xh, ids)
-        elif not (loc >= 0).all():
-            parts = self.experts.submit(self.L, xh, np.where(loc >= 0, -1, ids).astype(np.int32))
-        return Plan(T=T, x=xh, logits=lg, gate_logit=host[:, N_EMBD + N_EXPERT].copy(), ids=ids,
-                    wt=self.weights(lg, ids), loc=loc, refined=n_refined, parts=parts, dev=self.dev)
+        ids, wt, cpu_ids, n_refined, words, _ = route(lg, xh, self.wr_host, self.wr_norm, self.local, PRODUCT_ERR,
+                                                       s_cap if self.dev is not None else None)
+        parts = self.experts.submit(self.L, xh, cpu_ids) if (cpu_ids >= 0).any() else None
+        return Plan(T=T, x=xh, logits=lg, gate_logit=host[:, N_EMBD + N_EXPERT].copy(), ids=ids, wt=wt,
+                    loc=self.local[ids], refined=n_refined, parts=parts, dev=self.dev, words=words)
 
     def shared(self, pre: dict):
         """Device: shared expert sigmoid(gate) * W_d (silu(W_g x) * W_u x), f32 TILE [1,1,rows,2560]."""
@@ -525,11 +521,12 @@ def main() -> int:
     a = ap.parse_args()
     lo, _, hi = a.layers.partition("-")
     placement = load_placement(a.prepare)
+    dtype = getattr(ttnn, json.loads(Path(a.prepare).read_text()).get("dtype", "bfloat8_b"))
     w = Weights()
     for L in range(int(lo), int(hi or lo) + 1):
         t0 = time.time()
         if len(placement[L]):
-            DeviceExperts(None, w, L, placement[L])
+            DeviceExperts(None, w, L, placement[L], routed_dtype=dtype)
         print(f"layer {L}: {len(placement[L])} resident experts cached in {time.time() - t0:.1f} s", flush=True)
     return 0
 

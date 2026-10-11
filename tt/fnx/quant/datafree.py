@@ -43,6 +43,20 @@ def read_profile(path: Path | str = paths.EXPERT_PROFILE) -> np.ndarray:
     return np.frombuffer(b, "<u2", count=2 * n, offset=24).reshape(n, 2).astype(np.int32)
 
 
+def read_counts(stats_dir: Path | str = paths.QUANT / "stats") -> np.ndarray:
+    """[(layer, expert)] int32 [N_LAYERS * N_EXPERT, 2] hottest first by measured routing frequency (routings per
+    token of the layer) from stats_dir/L{LL}.npz 'n' (tools/route_counts.py; the Coder's: fnx.quant.pipeline)."""
+    d = Path(stats_dir)
+    if not (d / "L00.npz").exists():
+        raise FileNotFoundError(f"{d}: no routing counts (FNX_MODEL={paths.MODEL}: run tools/route_counts.py)")
+    freq = np.stack([np.load(d / f"L{L:02d}.npz")["n"] for L in range(N_LAYERS)]).astype(np.float64)
+    if freq.shape != (N_LAYERS, N_EXPERT):
+        raise ValueError(f"{d}: counts of shape {freq.shape}, FNX_MODEL={paths.MODEL} has {(N_LAYERS, N_EXPERT)}")
+    freq /= freq.sum(1, keepdims=True) / 10.0
+    order = np.argsort(-freq.reshape(-1), kind="stable")
+    return np.stack([order // N_EXPERT, order % N_EXPERT], 1).astype(np.int32)
+
+
 def quantize_layer(L: int, shard1: str, out_dir: str, chunk: int, threads: int) -> tuple[int, float]:
     """Layer L's N_EXPERT x 3 matrices -> pool files (written under a .tmp name, then renamed).  Returns (L, s)."""
     import torch
@@ -96,18 +110,20 @@ def cmd_pool(a) -> int:
 
 def cmd_plan(a) -> int:
     from . import store
-    pairs = read_profile()
+    pairs = read_counts() if a.rank == "counts" else read_profile()
     n_res = int(a.budget // EXPERT_BYTES)
     if len(pairs) < N_LAYERS * N_EXPERT:
-        raise ValueError(f"the profile ranks {len(pairs)} of {N_LAYERS * N_EXPERT} experts")
+        raise ValueError(f"the ranking holds {len(pairs)} of {N_LAYERS * N_EXPERT} experts")
     res = np.zeros((N_LAYERS, N_EXPERT), bool)
     top = pairs[:n_res]
     res[top[:, 0], top[:, 1]] = True
     name = a.name or f"search4-tiered-{a.budget:.4g}"
+    alloc = (f"measured routing counts {paths.QUANT / 'stats'} (tools/route_counts.py)" if a.rank == "counts" else
+             f"Strata's routing profile {paths.EXPERT_PROFILE.name}") + ", hottest first"
     meta = {"type": "bfp4-tiered", "budget_resident": a.budget, "resident_bytes": int(res.sum()) * EXPERT_BYTES,
             "resident_experts": int(res.sum()), "per_layer_resident": res.sum(1).tolist(),
             "method": "data-free BFP4 (fnx.quant.datafree: methods.search of the GGUF values)",
-            "alloc": f"Strata's routing profile {paths.EXPERT_PROFILE.name}, hottest first", "model": paths.MODEL}
+            "alloc": alloc, "model": paths.MODEL}
     d = store.write_plan(name, np.full((N_LAYERS, N_EXPERT, 3), 4, np.int8), meta, resident=res)
     print(f"plan {d}: {int(res.sum())} of {N_LAYERS * N_EXPERT} experts resident "
           f"({int(res.sum()) * EXPERT_BYTES / 1e9:.2f} GB), per layer {res.sum(1).min()}..{res.sum(1).max()}")
@@ -126,6 +142,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--budget", type=float, required=True, help="bytes of resident experts")
     p.add_argument("--name", default=None)
+    p.add_argument("--rank", choices=("counts", "profile"), default="counts",
+                   help="resident = the hottest by measured counts (FNX_QUANT_DIR/stats) or by Strata's profile")
     a = ap.parse_args(argv)
     return {"pool": cmd_pool, "plan": cmd_plan}[a.cmd](a)
 

@@ -1,4 +1,5 @@
-"""ctypes binding of libfnx_cpu.so: Flash-Next routed experts on the host CPU with Strata's kernels."""
+"""ctypes binding of libfnx_cpu.so: Flash-Next routed experts on the host CPU with Strata's kernels, and the cpu
+MoE's native routing step (`route`, cpu_experts/fnx_route.cpp)."""
 from __future__ import annotations
 
 import ctypes as C
@@ -28,7 +29,10 @@ def lib(path: str | None = None):
         L.fnx_moe.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_char_p, C.c_int]
         L.fnx_moe_submit.argtypes = L.fnx_moe.argtypes
         L.fnx_moe_wait.argtypes = [C.POINTER(C.c_double), C.c_char_p, C.c_int]
-        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_wait):
+        L.fnx_route.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_double,
+                                C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_int,
+                                C.POINTER(C.c_int)]
+        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_wait, L.fnx_route):
             f.restype = C.c_int
         _LIB = L
     return _LIB
@@ -37,6 +41,30 @@ def lib(path: str | None = None):
 def _check(rc: int, err) -> None:
     if rc != 0:
         raise RuntimeError(err.value.decode(errors="replace"))
+
+
+META_HDR = 64          # the device-expert metadata header words (fnx.tt.moe.HDR; fnx_route.cpp HDR)
+
+
+def route(lg: np.ndarray, x: np.ndarray, wr: np.ndarray, wr_norm: np.ndarray, local: np.ndarray, product_err: float,
+          s_cap: int | None = None):
+    """The cpu MoE's routing of T rows (fnx_route.cpp: top-10 with exact near-tie refinement, softmax weights).
+    lg f32 [T, E] device router logits, x f32 [T, 2560] the rows, wr f32 [E, 2560] router weights, wr_norm f64 [E],
+    local int32 [E] (device index of a resident expert, -1: CPU).  s_cap (T <= 32 only): also the resident slots'
+    metadata row (fnx.tt.moe.DeviceExperts.meta_words layout).  Returns (ids int32 [T, 10], wt f32 [T, 10], cpu_ids
+    int32 [T, 10] (-1 for resident slots), refined rows, words uint32 [HDR + 33 s_cap] or None, its entries)."""
+    T, E = lg.shape
+    ids = np.empty((T, 10), np.int32)
+    wt = np.empty((T, 10), np.float32)
+    cpu_ids = np.empty((T, 10), np.int32)
+    words = None if s_cap is None else np.empty(META_HDR + 33 * s_cap, np.uint32)
+    n_ent = C.c_int(0)
+    r = lib().fnx_route(T, E, x.shape[1], lg.ctypes.data, x.ctypes.data, wr.ctypes.data, wr_norm.ctypes.data,
+                        product_err, local.ctypes.data, ids.ctypes.data, wt.ctypes.data, cpu_ids.ctypes.data,
+                        None if words is None else words.ctypes.data, s_cap or 0, C.byref(n_ent))
+    if r < 0:
+        raise ValueError(f"fnx_route: {'entries exceed s_cap ' + str(s_cap) if r == -1 else 'metadata needs T <= 32'}")
+    return ids, wt, cpu_ids, r, words, n_ent.value
 
 
 TYPE_IDS = {"IQ2_XXS": 16, "IQ2_XS": 17, "IQ3_XXS": 18, "IQ1_S": 19, "IQ4_NL": 20, "IQ3_S": 21, "IQ2_S": 22,

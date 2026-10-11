@@ -59,14 +59,12 @@ def read_profile(path: Path) -> np.ndarray:
 
 
 def read_counts(stats_dir: Path) -> np.ndarray:
-    """[(layer, expert)] int32 [12288, 2] hottest first, by measured routing frequency (routings per token) from
-    fnx.quant.pipeline's calibration statistics (stats_dir/L{LL}.npz 'n': 128 x 2048 balanced chat/code/instruct/docs
-    tokens through the float model). Strata's profile carries no within-layer information for the Coder (its ranking
-    is the original 512-expert ranking mapped onto the kept experts; Spearman vs the Coder's routing ~0)."""
-    freq = np.stack([np.load(stats_dir / f"L{l:02d}.npz")["n"] for l in range(N_LAYERS)]).astype(np.float64)
-    freq /= freq.sum(1, keepdims=True) / 10.0
-    order = np.argsort(-freq.reshape(-1), kind="stable")
-    return np.stack([order // N_EXPERT, order % N_EXPERT], 1).astype(np.int32)
+    """fnx.quant.datafree.read_counts: hottest first by measured routing frequency (the Coder's stats_dir: fnx.quant.
+    pipeline's float-model calibration counts; iq3s: tools/route_counts.py).  Strata's profile carries no
+    within-layer information for the Coder (Spearman vs its routing ~0) and covers 0.25 of iq3s's held-out routings
+    with 4671 experts, against 0.41 by its measured counts (2026-10-10)."""
+    from fnx.quant.datafree import read_counts as rc
+    return rc(stats_dir)
 
 
 def resident_mask(pairs: np.ndarray, n: int) -> np.ndarray:

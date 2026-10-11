@@ -21,6 +21,9 @@ set(STRATA_ENABLE_CUDA OFF CACHE BOOL "" FORCE)
 set(STRATA_ENABLE_HIP OFF CACHE BOOL "" FORCE)
 set(STRATA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(${STRATA_SRC} strata EXCLUDE_FROM_ALL)
-add_library(fnx_cpu SHARED fnx_cpu.cpp)
+add_library(fnx_cpu SHARED fnx_cpu.cpp fnx_route.cpp)
+# the routing step (fnx_route.cpp) only: AVX2 lanes for its exact f64 dot products; no FMA contraction, so its
+# bounds and weights keep the separately rounded products and sums the parity check pins
+set_source_files_properties(fnx_route.cpp PROPERTIES COMPILE_OPTIONS "-march=native;-ffp-contract=off")
 target_link_libraries(fnx_cpu PRIVATE strata_kernels_cpu)
 target_include_directories(fnx_cpu PRIVATE ${STRATA_SRC}/include)

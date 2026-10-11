@@ -270,11 +270,10 @@ class Sequence:
         ttnn.copy_device_to_host_tensor(self.E.both[L], self.h_both, blocking=True)
         host = self.h_both.to_numpy().reshape(self.T, N_EMBD + ROUTER_COLS)
         t1 = time.perf_counter()
-        p = ctx["plan"] = moe.plan(host)
+        p = ctx["plan"] = moe.plan(host, self.s_cap[L] if moe.dev is not None else None)
         t2 = time.perf_counter()
         if moe.dev is not None:
-            words, _, _ = p.meta_words(self.s_cap[L])
-            ttnn.copy_host_to_device_tensor(_host_rm(words.view(np.int32).reshape(1, 1, 1, -1), ttnn.int32),
+            ttnn.copy_host_to_device_tensor(_host_rm(p.words.view(np.int32).reshape(1, 1, 1, -1), ttnn.int32),
                                             self.meta[L])
         moe.last = dict(ids=p.ids, wt=p.wt, on_dev=p.on_dev, refined=p.refined)
         prof = ctx.get("prof")
