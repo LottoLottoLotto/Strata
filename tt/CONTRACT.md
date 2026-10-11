@@ -205,7 +205,9 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   tok/s (plain 19.5/19.4/18.3 -> 23.2/22.8/21.9; load 19-25); device time per T=1 forward 38 ms (layers 25.7, shared
   + resident experts 10.6, head 1.8).  Gate (run cpu-s4): all dPPL -2.21% (chat -4.58%, code -0.00%, instruct -6.44%,
   book -1.02%), top-1 .925, KL .0437, GSM8K-50 46 (bfp8-profile .0067 / 46; exact 47): KL within .057, perplexity
-  moves beyond 2% - downward, against the exact experts.
+  moves beyond 2% - downward, against the exact experts.  The default stays bfp8-4671 by counts, gated 2026-10-11 (run
+  cpu-b8-counts): all +0.05% (chat +1.73%, code -0.18%, instruct -3.01%, book +0.03%), top-1 .974, KL .0066, GSM8K-50
+  46.
 - LM head: `FNX_HEAD=bfp8` (default) | `gptq4` (GPTQ-BFP4 head from `fnx/quant/head.py`; 0.69 ms/token (packed heads:
   1.65 vs 0.97 ms traced) + 0.34 GB DRAM saved). Gated 2026-10-07 on the cpu path: all dPPL +0.17% -> +0.73% (chat +1.19%), top-1 .970 -> .951, KL .008 -> .014;
   GSM8K-50 47/50 (bfp8 head 45/50, Strata 44/50: within n=50 noise); kept OPT-IN (cost/benefit). Every head mode places its 80 uploaded blocks by exact page copies into the bank-packed weight (`fnx.tt.packed_matmul.place_packed`; matmul `PackedMatmul`, bitwise the stock decode matmul and, for rows > 32, the old auto-config call); the old bfp8 concat + typecast
