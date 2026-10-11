@@ -103,8 +103,10 @@ _PLACEMENT: dict[str, tuple[list[np.ndarray], str]] = {}
 # the cpu MoE's resident experts per variant when FNX_EXPERT_PLACEMENT is unset: (N, dtype) = the N hottest (layer,
 # expert) pairs by the variant's measured routing counts (FNX_QUANT_DIR/stats, tools/route_counts.py) in that format
 # (N = tools/expert_placement.py --measure --dtype: free DRAM after the model - 3 GB headroom - 0.5 GB MTP drafter).
-# The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is the device one).
-DEFAULT_RESIDENT = {"coder": (0, "bfloat8_b"), "iq3s": (4671, "bfloat8_b")}
+# The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is the device one).  iq3s: 8823 min-MSE
+# BFP4 experts (user's choice 2026-10-11: MTP +20% over bfp8-4671 at KL .0437, GSM8K-50 46; perplexity -2.2%, see
+# CONTRACT); bfp8-4671 (KL .0066) via a placement file (tools/expert_placement.py --counts ... --dtype bfloat8_b).
+DEFAULT_RESIDENT = {"coder": (0, "bfloat8_b"), "iq3s": (8823, "bfloat4_b")}
 
 
 def _placement() -> tuple[list[np.ndarray], str]:
