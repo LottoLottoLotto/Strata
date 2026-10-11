@@ -43,13 +43,18 @@ def read_profile(path: Path | str = paths.EXPERT_PROFILE) -> np.ndarray:
     return np.frombuffer(b, "<u2", count=2 * n, offset=24).reshape(n, 2).astype(np.int32)
 
 
-def read_counts(stats_dir: Path | str = paths.QUANT / "stats") -> np.ndarray:
+def read_counts(stats_dir: Path | str | None = None) -> np.ndarray:
     """[(layer, expert)] int32 [N_LAYERS * N_EXPERT, 2] hottest first by measured routing frequency (routings per
-    token of the layer) from stats_dir/L{LL}.npz 'n' (tools/route_counts.py; the Coder's: fnx.quant.pipeline)."""
-    d = Path(stats_dir)
-    if not (d / "L00.npz").exists():
+    token of the layer): stats_dir/L{LL}.npz 'n' (tools/route_counts.py; the Coder's: fnx.quant.pipeline); default
+    FNX_QUANT_DIR/stats when it holds counts, else the repository's fnx.paths.ROUTE_COUNTS ('calib')."""
+    d = Path(stats_dir) if stats_dir is not None else paths.QUANT / "stats"
+    if (d / "L00.npz").exists():
+        freq = np.stack([np.load(d / f"L{L:02d}.npz")["n"] for L in range(N_LAYERS)]).astype(np.float64)
+    elif stats_dir is None and paths.ROUTE_COUNTS.exists():
+        d = paths.ROUTE_COUNTS
+        freq = np.load(d)["calib"].astype(np.float64)
+    else:
         raise FileNotFoundError(f"{d}: no routing counts (FNX_MODEL={paths.MODEL}: run tools/route_counts.py)")
-    freq = np.stack([np.load(d / f"L{L:02d}.npz")["n"] for L in range(N_LAYERS)]).astype(np.float64)
     if freq.shape != (N_LAYERS, N_EXPERT):
         raise ValueError(f"{d}: counts of shape {freq.shape}, FNX_MODEL={paths.MODEL} has {(N_LAYERS, N_EXPERT)}")
     freq /= freq.sum(1, keepdims=True) / 10.0

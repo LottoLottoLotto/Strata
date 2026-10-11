@@ -77,6 +77,9 @@ STRATA_TOOLS = _env_path("STRATA_TOOLS", REPO / "tools")           # gguf_reader
 EXPERT_PROFILE = REPO / "data" / _PROFILE                          # Strata's routing profile of the model
 PLE_ORACLE = REPO / "src" / "kernels" / "ple_oracle_vectors.inc"   # Strata's PLE oracle vectors (fnx.tests.test_ple)
 CMAKELISTS = REPO / "CMakeLists.txt"                               # project(strata VERSION x.y.z.w): the engine version
+# measured routing counts shipped with the repository (tools/route_counts.py --pack): residency when FNX_QUANT_DIR/stats
+# holds none (a fresh install)
+ROUTE_COUNTS = TT_DIR / "data" / f"{MODEL}-route-counts.npz"
 CPU_LIB = _env_path("FNX_CPU_LIB", TT_DIR / "cpu_experts" / "build-tt" / "libfnx_cpu.so")   # tt/cpu_experts/build.sh
 # A llama.cpp gguf-py ahead of the installed `gguf` package (the dev host's; absent elsewhere: the image's / venv's gguf)
 GGUF_PY = _env_path("GGUF_PY", "/home/lotto/llama.cpp/gguf-py")

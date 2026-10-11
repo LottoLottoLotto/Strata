@@ -2,12 +2,14 @@
 sequences (FNX_QUANT_DIR/calib/seqs.json, disjoint from the eval set) and, separately, its held-out ones.
 
     FNX_MODEL=iq3s tools/devrun.sh counts tools/route_counts.py [--every 2] [--max-minutes 120]
+    FNX_MODEL=iq3s python3 tools/route_counts.py --pack      (host: stats -> the repository's fnx.paths.ROUTE_COUNTS)
 
 Writes FNX_QUANT_DIR/stats/L{LL}.npz and stats-held/L{LL}.npz with n = int64 [N_EXPERT] routings per expert (the
 format tools/expert_placement.py --counts and fnx.quant.datafree plan --counts read); sequences already counted are
 skipped (stats/done.json), so a capture can be split over several device runs.  Routing is the cpu MoE's (the
-variant's default resident set as bfloat8_b: its ids are the exact experts' but for near-tie flips).  Teacher forcing
-in 128-row chunks without the head.
+variant's default resident set: its ids are the exact experts' but for near-tie flips).  Teacher forcing in 128-row
+chunks without the head.  --pack writes both sets into one compressed file (calib, held int32 [48, N_EXPERT], their
+sequence ids), what a fresh install ranks residency by (fnx.quant.datafree.read_counts).
 """
 from __future__ import annotations
 
@@ -26,12 +28,27 @@ from fnx.config import N_EXPERT, N_LAYERS  # noqa: E402
 CHUNK = 128
 
 
+def pack() -> int:
+    out = {}
+    for kind, key in (("stats", "calib"), ("stats-held", "held")):
+        d = paths.QUANT / kind
+        out[key] = np.stack([np.load(d / f"L{L:02d}.npz")["n"] for L in range(N_LAYERS)]).astype(np.int32)
+        out[key + "_ids"] = np.array(sorted(json.loads((d / "done.json").read_text())))
+    paths.ROUTE_COUNTS.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(paths.ROUTE_COUNTS, **out)
+    print(f"wrote {paths.ROUTE_COUNTS}: {len(out['calib_ids'])} calibration + {len(out['held_ids'])} held-out sequences")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--every", type=int, default=2, help="count every k-th calibration sequence (all held-out ones)")
     ap.add_argument("--max-minutes", type=float, default=120.0)
     ap.add_argument("--threads", type=int, default=16)
+    ap.add_argument("--pack", action="store_true", help="only write fnx.paths.ROUTE_COUNTS from the stats (no device)")
     a = ap.parse_args()
+    if a.pack:
+        return pack()
     seqs = json.loads((paths.QUANT / "calib" / "seqs.json").read_text())
     todo = [("stats", s) for s in seqs["calib"][::a.every]] + [("stats-held", s) for s in seqs["heldout"]]
     counts, done = {}, {}
