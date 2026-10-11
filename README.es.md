@@ -66,7 +66,7 @@ Experimental, escrito y probado por miembros de la comunidad en sus propios equi
 
 - **Tarjetas gráficas antiguas** (Tesla P40 / V100, GTX 10, Radeon VII / MI50, RX 6700 XT, RX 5500 XT): [Older GPUs](docs/OLDER_GPUS.md).
 - **Intel Arc**, compilado desde el código fuente en Linux: [Intel Arc](docs/INTEL_ARC.md).
-- **Tenstorrent Blackhole P150**, el Coder IQ1_M en Linux (motor en Docker): [P150](docs/TT_P150.md).
+- **Tenstorrent Blackhole P150**, el Coder IQ1_M e IQ3_S en Linux (motor en Docker): [P150](docs/TT_P150.md).
 - **AMD Ryzen AI Max (Strix Halo)**, compilado desde el código fuente en Linux: [Strix Halo](docs/STRIX_HALO.md).
 - **Procesadores antiguos sin AVX2**: funcionan, pero despacio. [Older CPUs](docs/INSTALL.md#older-cpus-experimental).
 

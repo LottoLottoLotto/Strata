@@ -8,15 +8,18 @@ download (or --gguf-dir), the pack, the tokenizer, the MTP draft layer - is setu
 
   - the GPU check: the P150 (/dev/tenstorrent/N, named by the tt-kmd driver's sysfs or `tt-smi -s`) is offered
     through setup's AMD path (the one with no ready-made engine);
-  - the choices: the Coder (IQ1_M) only, a context of at most 32768 tokens, no images (what the engine was built and
-    measured for: tt/CONTRACT.md);
+  - the choices: the Coder (IQ1_M) and the full model at IQ3_S, a context of at most 32768 tokens, no images (what
+    the engine was built and measured for: tt/CONTRACT.md);
   - the engine step: Docker and the engine image (pulled when missing) instead of a compiled engine, Strata's CPU
     expert kernels compiled in that image (tt/cpu_experts/build.sh, libfnx_cpu.so), and tt/serve/BUILD.json beside
     the wrapper, which setup and the server read the engine's version from;
-  - the RAM rule: the CUDA engine keeps every expert in RAM, the P150 keeps most of them in its own 32 GB and pins
-    a ~12 GB host pool for the rest, so setup's rule does not apply;
-  - after the pack and the MTP draft layer: the P150's own files (the GPTQ-BFP4 expert store of the default plan and
-    the drafter's BFP4 experts, tt/artifacts.json) are fetched into FNX_DATA by tt/tools/tt_artifacts.py;
+  - the RAM rule: the CUDA engine keeps every expert in RAM; on the P150 the Coder keeps most of its experts in the
+    card's 32 GB and pins a ~12 GB host pool for the rest, IQ3_S runs the experts the card does not hold on the CPU
+    from the GGUF (warm in the page cache), so setup's rule does not apply (TT_MODELS' own minimum instead);
+  - after the pack and the MTP draft layer: the P150's own files (tt/artifacts.json: for the Coder the GPTQ-BFP4
+    expert store of the default plan and the drafter's BFP4 experts, for IQ3_S the drafter's only) are fetched into
+    FNX_DATA by tt/tools/tt_artifacts.py; for IQ3_S the card's 4-bit expert caches are then built on the CPU (no card,
+    `fnx.tt.moe --prepare default`), so the first start does not spend ~15 minutes on them;
   - the config: the engine is tt/serve/tt-engine.sh (the engine in Docker, holding the shared device lock), backend
     "tt"; the run script starts tt/serve/server_tt.py (serve/server.py plus the P150's Monitor readings and start
     narration).
@@ -29,6 +32,7 @@ When setup.py changes the steps this relies on, this stops with a message rather
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -50,15 +54,32 @@ TT = ROOT / "tt"
 WRAPPER = TT / "serve" / "tt-engine.sh"
 ARTIFACTS_TOOL = TT / "tools" / "tt_artifacts.py"
 CPU_BUILD = TT / "cpu_experts" / "build.sh"
+DEVRUN = TT / "tools" / "devrun.sh"
+# in the engine image: a P150's cluster descriptor, for ttnn's block-float packing without a card (fnx.tt.moe)
+MOCK_CLUSTER = ("/home/container_app_user/tt-metal/tt_metal/third_party/tt-cluster-descriptors/blackhole/"
+                "p100_cluster_desc/p100_cluster_desc.yaml")
 MANIFEST = TT / "artifacts.json"
 DOCS = "docs/TT_P150.md"
 DEFAULT_IMAGE = P.DEFAULT_IMAGE    # tt-engine.sh's image unless FNX_IMAGE names another
 IMAGE_GB = 5.6                      # the default image, unpacked
-FAMILY, MODEL = "coder", "IQ1_M"    # the model the engine was built and measured for
+# the models the engine was built and measured for: setup's size -> its family, the fnx variant (fnx.paths.VARIANTS),
+# the RAM it needs, the tt/artifacts.json files it reads (None: all), what --check says of it
+TT_MODELS = {
+    "IQ1_M": {"family": "coder", "variant": "coder", "ram_gb": 32, "artifacts": None,
+              "menu": "its experts on the card and in a ~12 GB host pool",
+              "fit": "the Coder: fits the P150 (most of its experts in the card's 32 GB, the rest in a ~12 GB pinned "
+                     "host pool)"},
+    "IQ3_S": {"family": "qwen", "variant": "iq3s", "ram_gb": 64, "artifacts": ("mtp/*",), "cache_gb": 30,
+              "menu": "8,823 of its experts on the card, the rest on the CPU (64 GB of RAM)",
+              "fit": "the full model: 8,823 experts on the card, the rest on the CPU from the GGUF (64 GB of RAM keep "
+                     "it warm)"},
+}
+VARIANT_ARTIFACTS = {d["variant"]: d["artifacts"] for d in TT_MODELS.values()}
 CTX_MAX = 32768                     # fnx.serve_engine CTX_MAX: fnx.tt.qsa's sparse selection is verified to 32,800
 PREFILL = 128                       # fnx.serve_engine DEFAULT_CHUNK: prompt rows per device call
 IDLE_UNLOAD_S = 900                 # the shared card is given back after 15 idle minutes
-MIN_RAM_GB = 32                     # a ~12 GB pinned host pool + the engine + the server
+MIN_RAM_GB = min(d["ram_gb"] for d in TT_MODELS.values())   # the card note; each model's own after its choice
+PREP_WORKERS = 4                    # IQ3_S's card caches: layer ranges converted at a time (~8 GB of RAM each)
 # the engine's flags (fnx.serve_engine); every other flag setup writes is the CUDA engine's and is left out
 FNX_ARGS = frozenset({"--pack", "--native", "--ple-gguf", "--mtp", "--max-context", "--prefill", "--spec",
                       "--spec-min-p", "--threads", "--prompt-cache", "--eos-ids", "--no-warmup"})
@@ -277,17 +298,31 @@ def tt_argv(argv) -> list:
 
 
 def restrict() -> None:
-    """The choices setup offers: the Coder, IQ1_M, contexts up to 32768.  setup.main() builds --family/--model's
-    argparse choices and its menus from these, so another model is refused before anything is done."""
-    if FAMILY not in S.FAMILIES or MODEL not in S.MODELS:
-        S.fail(f"setup.py has no {FAMILY} / {MODEL} model any more: tt/setup_tt.py needs updating for this setup.py")
-    S.FAMILIES = {FAMILY: S.FAMILIES[FAMILY]}
-    S.MODELS = {MODEL: S.MODELS[MODEL]}
+    """The choices setup offers: TT_MODELS (the Coder first: the default), contexts up to 32768.  setup.main() builds
+    --family/--model's argparse choices and its menus from these, so another model is refused before anything is
+    done."""
+    fams = {}
+    for m, d in TT_MODELS.items():
+        if d["family"] not in S.FAMILIES or m not in S.MODELS:
+            S.fail(f"setup.py has no {d['family']} / {m} model any more: tt/setup_tt.py needs updating for this setup.py")
+        fams[d["family"]] = S.FAMILIES[d["family"]]
+    S.FAMILIES = fams
+    S.MODELS = {m: S.MODELS[m] for m in TT_MODELS}
     S.CONTEXTS = [c for c in S.CONTEXTS if c <= CTX_MAX]
 
 
-def model_tag() -> str:
-    return (S.FAMILIES[FAMILY]["tag"] + MODEL).lower()
+def model_tag(model: str) -> str:
+    return (S.FAMILIES[TT_MODELS[model]["family"]]["tag"] + model).lower()
+
+
+def chosen_model() -> str | None:
+    """The size chosen in setup's step 2 (None before it)."""
+    return STATE.get("model")
+
+
+def config_variant(cfg: dict) -> str:
+    """The fnx variant of a TT config: from its --native shard's name, as tt-engine.sh decides it."""
+    return P.detect_model([str(x) for x in cfg.get("args") or []])
 
 
 def configured_env(key: str, cfg: dict | None = None) -> str | None:
@@ -295,10 +330,16 @@ def configured_env(key: str, cfg: dict | None = None) -> str | None:
     if os.environ.get(key):
         return os.environ[key]
     if cfg is None:
-        try:
-            cfg = json.loads((S.ROOT / f"strata-{model_tag()}.json").read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            cfg = {}
+        cfg = {}
+        models = [chosen_model()] if chosen_model() else list(TT_MODELS)
+        for m in models:
+            try:
+                c = json.loads((S.ROOT / f"strata-{model_tag(m)}.json").read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                continue
+            if c.get("backend") == "tt" and (c.get("env") or {}).get(key):
+                cfg = c
+                break
     return (cfg.get("env") or {}).get(key) or None
 
 
@@ -334,11 +375,14 @@ def artifact_path(fnx_data: Path, rel: str, env=None) -> Path:
     return Path(fnx_data) / rel
 
 
-def missing_artifacts(fnx_data: Path, manifest: Path = MANIFEST, env=None) -> list[dict]:
-    """The manifest's files that are absent or of the wrong size (presence only: tt_artifacts.py fetch checks the
-    SHA-256)."""
+def missing_artifacts(fnx_data: Path, manifest: Path = MANIFEST, env=None, variant: str = "coder") -> list[dict]:
+    """The manifest's files the variant reads (VARIANT_ARTIFACTS) that are absent or of the wrong size (presence
+    only: tt_artifacts.py fetch checks the SHA-256)."""
+    pats = VARIANT_ARTIFACTS[variant]
     out = []
     for f in manifest_files(manifest):
+        if pats is not None and not any(fnmatch.fnmatch(f["path"], p) for p in pats):
+            continue
         p = artifact_path(fnx_data, f["path"], env)
         try:
             if p.stat().st_size == int(f["size"]):
@@ -359,7 +403,7 @@ def cpu_src() -> str:
     """A fingerprint of the CPU expert library's sources (tt/cpu_experts and Strata's engine sources): when a `git pull`
     changes them, it is compiled again."""
     h = hashlib.sha256(S.source_hash(S.ENGINE_SOURCES).encode())
-    for f in ("CMakeLists.txt", "fnx_cpu.cpp"):
+    for f in ("CMakeLists.txt", "fnx_cpu.cpp", "fnx_route.cpp"):
         h.update((CPU_BUILD.parent / f).read_bytes())
     return h.hexdigest()[:16]
 
@@ -410,29 +454,65 @@ def engine_step(image: str, llama: Path) -> Path:
             S.fail(f"{CPU_BUILD} did not write {lib}", f"the build's output is above - {DOCS}")
     S.ok(f"CPU expert kernels: {lib}")
     data = fnx_data_dir()
-    todo = missing_artifacts(data)
-    need = sum(int(f.get("size", 0)) for f in todo) / 1e9
-    if todo:
+    model = chosen_model() or "IQ1_M"
+    todo = missing_artifacts(data, variant=TT_MODELS[model]["variant"])
+    need = sum(int(f.get("size", 0)) for f in todo) / 1e9 + TT_MODELS[model].get("cache_gb", 0)
+    if need:
         free = free_gb_at(data)
         if free is not None and free < need + 1:
             S.fail(f"not enough free disk space in {data} for the P150's expert files: need ~{need + 1:.0f} GB, "
                    f"{free:.0f} GB free", "free some space, or set FNX_DATA to a folder on a bigger drive")
-        S.ok(f"the P150's expert files: {len(todo)} to fetch after the model (~{need:.1f} GB, into {data})")
+        S.ok(f"the P150's expert files: {len(todo)} to fetch after the model"
+             + (f" + the card's expert caches to build" if TT_MODELS[model].get("cache_gb") else "")
+             + f" (~{need:.1f} GB, into {data})")
     else:
         S.ok(f"the P150's expert files: {data}")
     build_json(WRAPPER.parent, image, src)
     return WRAPPER.parent
 
 
-def prepare(fnx_data: Path) -> None:
-    """The P150's own files (tt/artifacts.json: the expert store of the default plan, the drafter's BFP4 experts),
-    fetched into FNX_DATA and checked against their SHA-256 (a file already there and checked is not read again)."""
+def prepare(fnx_data: Path, variant: str = "coder", gguf: str | None = None) -> None:
+    """The P150's own files the variant reads (tt/artifacts.json, VARIANT_ARTIFACTS), fetched into FNX_DATA and
+    checked against their SHA-256 (a file already there and checked is not read again); for iq3s then its card
+    caches from the model's shard 1 `gguf` (prepare_caches)."""
     if not ARTIFACTS_TOOL.exists():
         S.fail(f"{ARTIFACTS_TOOL} is missing", f"use a full Strata checkout (git clone) - {DOCS}")
-    S.say(f"  The P150's expert files (GPTQ-BFP4, ~35 GB the first time) into {fnx_data}:")
+    pats = VARIANT_ARTIFACTS[variant]
+    size = sum(int(f.get("size", 0)) for f in manifest_files()
+               if pats is None or any(fnmatch.fnmatch(f["path"], p) for p in pats)) / 1e9
+    S.say(f"  The P150's {'expert' if pats is None else 'draft-layer'} files (~{size:.0f} GB the first time) into "
+          f"{fnx_data}:")
     Path(fnx_data).mkdir(parents=True, exist_ok=True)
-    S.run([sys.executable, str(ARTIFACTS_TOOL), "fetch", "--data", str(fnx_data)])
-    S.ok(f"the P150's expert files: {fnx_data}")
+    S.run([sys.executable, str(ARTIFACTS_TOOL), "fetch", "--data", str(fnx_data),
+           *(["--only", ",".join(pats)] if pats else [])])
+    S.ok(f"the P150's files: {fnx_data}")
+    if variant == "iq3s":
+        if not gguf:
+            S.fail("the model's file is unknown to the cache step: tt/setup_tt.py needs updating for this setup.py")
+        prepare_caches(fnx_data, variant, gguf)
+
+
+def prepare_caches(fnx_data: Path, variant: str, gguf: str) -> None:
+    """The card's resident-expert caches of the variant's default placement (fnx.tt.moe --prepare default) from the
+    model's shard 1 `gguf`, built in the engine image on the CPU with a mock card (no device, no lock), PREP_WORKERS
+    layer ranges at a time.  Layers already cached take a second."""
+    S.say("  Building the card's 4-bit expert caches from the model file (on the CPU, ~15 minutes the first time) ...")
+    env = {**os.environ, "FNX_DATA": str(fnx_data), "FNX_MODEL": variant, "NODEV": "1",
+           "TT_METAL_MOCK_CLUSTER_DESC_PATH": MOCK_CLUSTER, "FNX_IMAGE": engine_image()}
+    env.pop("FNX_EXPERT_PLACEMENT", None)
+    n = 48
+    step = -(-n // PREP_WORKERS)
+    procs = []
+    for lo in range(0, n, step):
+        rng = f"{lo}-{min(n, lo + step) - 1}"
+        procs.append((rng, subprocess.Popen(["bash", str(DEVRUN), f"setup-prep-{variant}-{rng}", "-m", "fnx.tt.moe",
+                                             "--prepare", "default", "--layers", rng, "--gguf", gguf], env=env,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)))
+    bad = [rng for rng, p in procs if p.wait() != 0]
+    if bad:
+        S.fail(f"building the card's expert caches failed for layers {', '.join(bad)}",
+               f"see {Path(fnx_data) / 'logs' / 'dev'}/setup-prep-{variant}-*.log - {DOCS}")
+    S.ok("the card's expert caches: built")
 
 
 def to_tt(cfg: dict, fnx_data, image: str = DEFAULT_IMAGE) -> dict:
@@ -512,14 +592,17 @@ def say_rewriter(real_ram: float, fake_ram: float, image: str):
         msg = msg.replace("just run ./setup.sh", "just run ./setup.sh --backend tt")
         msg = msg.replace("Run it again without --check to install.", "Run ./setup.sh --backend tt to install.")
         msg = msg.replace(f"RAM: {fake_ram:.0f} GB",
-                          f"RAM: {real_ram:.0f} GB (the engine pins ~12 GB of it for the experts the card does not hold)")
+                          f"RAM: {real_ram:.0f} GB (the Coder pins ~12 GB of it for the experts the card does not hold; "
+                          "IQ3_S runs those on the CPU from the model file in RAM)")
         msg = msg.replace(f"engine: {stub_exe}", f"engine: {WRAPPER} (Docker image {image})")
-        msg = re.sub(r", uses ~\d+ GB of RAM", ", its experts on the card and in a ~12 GB host pool", msg)
+        m = re.match(r"\s+\d+\) (\S+)\s", msg)                # a size in step 2's menu: the P150's use of RAM
+        if m and m.group(1) in TT_MODELS:
+            msg = re.sub(r", uses ~\d+ GB of RAM", ", " + TT_MODELS[m.group(1)]["menu"], msg)
         if re.match(r"\s+\[ok\] KV cache: ", msg):
             msg = "  [ok] KV cache: bf16 (the TT engine's)"
-        if re.match(r"\s+\S+\s+needs ~\d+ GB RAM:", msg):   # --check's CUDA verdict: replaced by the P150's
-            msg = (f"  {MODEL:8s} the Coder: fits the P150 (most of its experts in the card's 32 GB, the rest in a "
-                   "~12 GB pinned host pool)")
+        m = re.match(r"\s+(\S+)\s+needs ~\d+ GB RAM:", msg)    # --check's CUDA verdict: replaced by the P150's
+        if m and m.group(1) in TT_MODELS:
+            msg = f"  {m.group(1):8s} {TT_MODELS[m.group(1)]['fit']}"
         say(msg)
     return say_tt
 
@@ -528,7 +611,7 @@ def say_rewriter(real_ram: float, fake_ram: float, image: str):
 NEEDED = ("gpus", "amd_gpus", "amd_problem", "amd_device_access_problem", "hip_vision", "build_engine_hip",
           "hipblaslt_table", "ram_gb", "bench_tips", "parallel_note", "desktop_reserve_note", "previous_config",
           "installed_configs", "data_folder", "write_run_script", "start", "upgrade_config", "write_config",
-          "source_version", "run", "step", "say", "main")
+          "source_version", "low_ram_wanted", "run", "step", "say", "main")
 
 
 def install(argv) -> None:
@@ -567,7 +650,7 @@ def install(argv) -> None:
             S.warn(f"{card['node']} is not readable and writable by this user: the engine cannot open the card "
                    f"(tt-kmd's udev rule makes it so; {DOCS})")
         if real_ram < MIN_RAM_GB:
-            S.warn(f"RAM: {real_ram:.0f} GB - the engine pins a ~12 GB host pool for the experts the card does not "
+            S.warn(f"RAM: {real_ram:.0f} GB - the Coder pins a ~12 GB host pool for the experts the card does not "
                    f"hold, beside its own working memory: {MIN_RAM_GB} GB or more is recommended")
         if hugepages_1g() < 1:
             S.warn("no 1 GiB huge pages are reserved: tt-metal maps the card's host memory through them when the "
@@ -601,6 +684,16 @@ def install(argv) -> None:
     S.bench_tips = lambda *a, **k: []                   # the community bench numbers are the CUDA engine's
     S.parallel_note = lambda *a, **k: []                # one request at a time
     S.desktop_reserve_note = lambda *a, **k: []         # an AMD card's desktop VRAM
+    low_ram_wanted = S.low_ram_wanted
+
+    def low_ram_wanted_tt(model, ram, choice="auto"):
+        """Called once right after step 2's size choice: the model this install is for, and its own RAM need."""
+        STATE["model"] = model
+        need = TT_MODELS[model]["ram_gb"]
+        if real_ram < need:
+            S.warn(f"RAM: {real_ram:.0f} GB - {model} on the P150 wants {need} GB or more ({TT_MODELS[model]['fit']})")
+        return low_ram_wanted(model, ram, choice)
+    S.low_ram_wanted = low_ram_wanted_tt
     step = S.step
 
     def step_tt(n, title):
@@ -641,7 +734,8 @@ def install(argv) -> None:
         cfg_path = Path(cfg_path)
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         data = fnx_data_dir(cfg)
-        prepare(data)                                   # the P150's files, after the pack and the MTP draft layer
+        # the P150's files, after the pack and the MTP draft layer (iq3s: and its card caches from the GGUF)
+        prepare(data, config_variant(cfg), flag([str(x) for x in cfg.get("args") or []], "--native"))
         S.write_config(cfg_path, to_tt(cfg, data, image))
         return run_script(write, model, cfg_path, port, open_browser)
     S.write_run_script = write_run_script
@@ -658,8 +752,9 @@ def install(argv) -> None:
         paths = [cfg["exe"], *[x for x in a if x.endswith(".gguf")], *[flag(a, f) for f in ("--pack", "--mtp") if flag(a, f)]]
         missing = [p for p in paths if not Path(p).exists()]
         data = Path((cfg.get("env") or {}).get("FNX_DATA") or fnx_data_dir(cfg))
-        missing += [str(artifact_path(data, f["path"], {**os.environ, **(cfg.get("env") or {})}))
-                    for f in missing_artifacts(data, env={**os.environ, **(cfg.get("env") or {})})]
+        env = {**os.environ, **(cfg.get("env") or {})}
+        missing += [str(artifact_path(data, f["path"], env))
+                    for f in missing_artifacts(data, env=env, variant=config_variant(cfg))]
         if missing:
             S.fail(f"{cfg_path.name} refers to missing files: {missing[0]}"
                    + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else ""),

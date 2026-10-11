@@ -111,7 +111,8 @@ class TtBackend(unittest.TestCase):
 
 
 class Choices(unittest.TestCase):
-    """Only what the engine was built and measured for: the Coder IQ1_M, contexts up to 32768, no images."""
+    """Only what the engine was built and measured for: the Coder IQ1_M and the full model's IQ3_S, contexts up to
+    32768, no images."""
 
     def setUp(self):
         for name in ("FAMILIES", "MODELS", "CONTEXTS"):
@@ -125,12 +126,34 @@ class Choices(unittest.TestCase):
                 mock.patch.object(setup, "data_folder", side_effect=AssertionError("parsed")):
             return quiet(setup.main)
 
-    def test_only_the_coder_iq1_m(self):
-        self.assertEqual(list(setup.FAMILIES), ["coder"])
-        self.assertEqual(list(setup.MODELS), ["IQ1_M"])
-        for argv in (["--model", "IQ3_S"], ["--family", "qwen"], ["--model", "UD-IQ4_XS"]):
+    def test_only_the_coder_iq1_m_and_iq3_s(self):
+        self.assertEqual(list(setup.FAMILIES), ["coder", "qwen"])          # the Coder first: the default
+        self.assertEqual(list(setup.MODELS), ["IQ1_M", "IQ3_S"])
+        for argv in (["--model", "IQ2_XS"], ["--family", "swift"], ["--model", "UD-IQ4_XS"]):
             rc, _ = self.parse(*argv)
             self.assertEqual(rc, ("exit", 2), argv)        # argparse: invalid choice, before anything is done
+
+    def test_each_model_fetches_only_the_files_it_reads(self):
+        man = {"files": [{"path": "quant/store/pool/L00.b4.npy", "size": 5, "sha256": "x"},
+                         {"path": "mtp/experts-bfp4-search.u8", "size": 7, "sha256": "y"}]}
+        with tempfile.TemporaryDirectory() as d:
+            m = Path(d) / "artifacts.json"
+            m.write_text(json.dumps(man))
+            coder = [f["path"] for f in T.missing_artifacts(Path(d), m, env={}, variant="coder")]
+            iq3s = [f["path"] for f in T.missing_artifacts(Path(d), m, env={}, variant="iq3s")]
+            (Path(d) / "mtp").mkdir()
+            (Path(d) / "mtp" / "experts-bfp4-search.u8").write_bytes(b"1234567")
+            iq3s_after = T.missing_artifacts(Path(d), m, env={}, variant="iq3s")
+        self.assertEqual(coder, ["quant/store/pool/L00.b4.npy", "mtp/experts-bfp4-search.u8"])
+        self.assertEqual(iq3s, ["mtp/experts-bfp4-search.u8"])             # no GPTQ store: its experts are the GGUF's
+        self.assertEqual(iq3s_after, [])
+
+    def test_a_config_is_the_variant_its_model_file_names(self):
+        for native, want in (("/m/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf", "iq3s"),
+                             ("/m/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf", "coder")):
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("FNX_MODEL", None)
+                self.assertEqual(T.config_variant({"args": ["--native", native, "--max-context", "32768"]}), want)
 
     def test_contexts_stop_at_32k_and_the_recommendation_is_one_of_them(self):
         self.assertEqual(max(setup.CONTEXTS), 32768)

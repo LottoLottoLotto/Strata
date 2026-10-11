@@ -66,7 +66,7 @@ NVIDIA：Q2_0 はエンジン 0.1.36、ほかの行は 0.1.26 で測定（回答
 
 - **古いグラフィックカード**（Tesla P40 / V100、GTX 10、Radeon VII / MI50、RX 6700 XT、RX 5500 XT）：[Older GPUs](docs/OLDER_GPUS.md)。
 - **Intel Arc**（Linux でソースからビルド）：[Intel Arc](docs/INTEL_ARC.md)。
-- **Tenstorrent Blackhole P150**（Linux 上の Coder IQ1_M、エンジンは Docker）：[P150](docs/TT_P150.md)。
+- **Tenstorrent Blackhole P150**（Linux 上の Coder IQ1_M と IQ3_S、エンジンは Docker）：[P150](docs/TT_P150.md)。
 - **AMD Ryzen AI Max（Strix Halo）**（Linux でソースからビルド）：[Strix Halo](docs/STRIX_HALO.md)。
 - **AVX2 のない古いプロセッサー**：動きますが、遅いです。[Older CPUs](docs/INSTALL.md#older-cpus-experimental)。
 

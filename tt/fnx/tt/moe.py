@@ -510,21 +510,31 @@ class Moe:
         return bo
 
 
+MOCK_CLUSTER = ("/home/container_app_user/tt-metal/tt_metal/third_party/tt-cluster-descriptors/blackhole/"
+                "p100_cluster_desc/p100_cluster_desc.yaml")      # in the image: block-float packing without a card
+
+
 def main() -> int:
     """Host-only conversion of the device-expert weight caches for a placement (no device; ttnn's block-float
-    packing needs a cluster descriptor, a mock one does):
-        TT_METAL_MOCK_CLUSTER_DESC_PATH=<p100_cluster_desc.yaml> NODEV=1 tools/devrun.sh prep -m fnx.tt.moe \\
-            --prepare PLACEMENT.json [--layers 0-47]"""
+    packing needs a cluster descriptor, a mock one does, MOCK_CLUSTER):
+        TT_METAL_MOCK_CLUSTER_DESC_PATH=<MOCK_CLUSTER> NODEV=1 tools/devrun.sh prep -m fnx.tt.moe \\
+            --prepare PLACEMENT.json|default [--layers 0-47] [--gguf SHARD1]
+    default: the variant's default placement (FNX_EXPERT_PLACEMENT unset: DEFAULT_RESIDENT), what the engine loads."""
     import argparse
     from ..weights import Weights
     ap = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--prepare", required=True, help="placement JSON (tools/expert_placement.py)")
+    ap.add_argument("--prepare", required=True, help="placement JSON (tools/expert_placement.py), or 'default'")
     ap.add_argument("--layers", default=f"0-{N_LAYERS - 1}")
+    ap.add_argument("--gguf", default=None, help="the model's shard 1 (default fnx.paths.SHARD1)")
     a = ap.parse_args()
     lo, _, hi = a.layers.partition("-")
-    placement = load_placement(a.prepare)
-    dtype = getattr(ttnn, json.loads(Path(a.prepare).read_text()).get("dtype", "bfloat8_b"))
-    w = Weights()
+    if a.prepare == "default":
+        os.environ.pop("FNX_EXPERT_PLACEMENT", None)
+        placement, dtype = [default_resident(L) for L in range(N_LAYERS)], resident_dtype()
+    else:
+        placement = load_placement(a.prepare)
+        dtype = getattr(ttnn, json.loads(Path(a.prepare).read_text()).get("dtype", "bfloat8_b"))
+    w = Weights(a.gguf)
     for L in range(int(lo), int(hi or lo) + 1):
         t0 = time.time()
         if len(placement[L]):
