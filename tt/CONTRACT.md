@@ -209,6 +209,13 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   all +0.05% (chat +1.73%, code -0.18%, instruct -3.01%, book +0.03%), top-1 .974, KL .0066, GSM8K-50 46.  Default:
   bfp4-8823 (fnx.tt.moe.DEFAULT_RESIDENT; the user chose speed over the perplexity shift, 2026-10-11); test_serve PASS
   17/17 with it; served general chat warm 23.5-30 tok/s (was 19.5-21.7 with bfp8-4671 by profile).
+- Traced decode drafts full chains (fnx.serve_engine: draft min_p 0 when FNX_TRACE is on; --spec-min-p applies to
+  eager decode only).  Strata's setup writes --spec-min-p 0.5, which ended chains early, so most verify windows had 2-3
+  rows and ran eagerly (traces exist for 1 and `spec` rows only).  IQ3_S, LocalMaxxing protocol (2090-token prose
+  prompt, 256 out): 2.15 drafts per window, 155 ms per window, 13.2 tok/s -> full chains 119 ms, 19.4 tok/s; test_serve
+  H1 32.1 -> 42.0 tok/s.  The bench (test_trace) builds its drafter with min_p 0 and never saw it.  Still open at that
+  length: each request recaptures the traces after its prompt (~2.7 s of TTFT: the last prompt chunk's row count is new),
+  and past position 2050 every QSA layer's host step (sparse selection, fnx.tt.qsa.sparse_host) costs ~21 ms per round.
 - LM head: `FNX_HEAD=bfp8` (default) | `gptq4` (GPTQ-BFP4 head from `fnx/quant/head.py`; 0.69 ms/token (packed heads:
   1.65 vs 0.97 ms traced) + 0.34 GB DRAM saved). Gated 2026-10-07 on the cpu path: all dPPL +0.17% -> +0.73% (chat +1.19%), top-1 .970 -> .951, KL .008 -> .014;
   GSM8K-50 47/50 (bfp8 head 45/50, Strata 44/50: within n=50 noise); kept OPT-IN (cost/benefit). Every head mode places its 80 uploaded blocks by exact page copies into the bank-packed weight (`fnx.tt.packed_matmul.place_packed`; matmul `PackedMatmul`, bitwise the stock decode matmul and, for rows > 32, the old auto-config call); the old bfp8 concat + typecast

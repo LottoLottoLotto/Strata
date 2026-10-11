@@ -740,12 +740,18 @@ def main(argv=None) -> int:
             f"{sum(lay[3].store.host_bytes for lay in model.layers) / 1e9:.2f} GB host pool, "
             f"{(model.host_pool.nbytes if model.host_pool else 0) / 1e9:.2f} GB pinned)" if moe == "device" else
             f" ({sum(len(lay[3].dev.resident) for lay in model.layers if lay[3].dev)} experts resident on the device)"))
-        drafter = make_drafter(mesh, w, max(ctx, chunk), spec - 1, a.spec_min_p, model, mw) if spec > 1 else None
+        traced = os.environ.get("FNX_TRACE", "1") != "0"
+        # --spec-min-p ends a draft chain at an unsure draft (Strata's CUDA saving: fewer verify rows).  Traced decode
+        # replays windows of exactly `spec` rows; a shorter window runs eagerly at 2-3x the cost, so traced the chain
+        # is always drafted in full (min_p 0).  The emitted tokens are the greedy verify's either way.  IQ3_S, 2090-token
+        # prompt, min_p 0.5: 2.15 drafts per window, decode 13 tok/s.
+        min_p = 0.0 if traced else a.spec_min_p
+        drafter = make_drafter(mesh, w, max(ctx, chunk), spec - 1, min_p, model, mw) if spec > 1 else None
         if not a.no_warmup:                              # program builds for the prompt and decode shapes
             t1 = time.time()
             warm_up(model, drafter, chunk)
             log(f"warm-up in {time.time() - t1:.1f} s")
-        if os.environ.get("FNX_TRACE", "1") != "0":     # traced decode steps (fnx.tt.trace); FNX_TRACE=0: eager
+        if traced:                                       # traced decode steps (fnx.tt.trace); FNX_TRACE=0: eager
             t1 = time.time()
             model.enable_trace(Ts=(1, spec) if spec > 1 else (1,), verbose=False,
                                drafter=drafter.mtp if drafter is not None else None)
@@ -758,7 +764,9 @@ def main(argv=None) -> int:
                         drafter=drafter)
         log(f"ready in {time.time() - t0:.0f} s: context {ctx}, prompt chunk {chunk}, "
             f"{engine.prompt_cache} conversation checkpoints, eos {sorted(engine.eos)}, "
-            + (f"MTP verify windows of {spec} rows (draft min_p {a.spec_min_p})" if drafter else "plain decode"))
+            + (f"MTP verify windows of {spec} rows (draft min_p {min_p}"
+               + (f"; --spec-min-p {a.spec_min_p} applies to eager decode only" if traced and a.spec_min_p else "")
+               + ")" if drafter else "plain decode"))
         emit(f"INFO context={ctx} kv=bf16 kv_resident=0 spec={spec} mtp_max={spec if drafter else 0} lookup=0 "
              f"prompt_chunk={chunk} conversation_cache_slots={engine.prompt_cache} tail_role_token=-1 "
              f"vram_elastic=0 cvec=0 device=p150 engine={source_version()}")
