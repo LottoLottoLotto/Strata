@@ -1,0 +1,2 @@
+# the measured routing counts ship with the repository (the root .gitignore excludes *.npz)
+!*.npz
