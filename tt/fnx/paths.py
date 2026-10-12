@@ -40,10 +40,11 @@ def _env_path(key: str, default: Path | str) -> Path:
 
 # ------------------------------------------------------------------------------------------------ model variant
 # name: (the GGUF's quantization tag, routed experts per layer, Strata's expert profile in <repo>/data, the default
-# FNX_MOE: fnx.tt.model's quality gates, the reasons there)
+# FNX_MOE: fnx.tt.model's quality gates, the reasons there; the default prompt chunk (rows per prompt call): IQ3_S
+# reads prompts 12-14% faster at 256 than 128 (2026-10-12); 512 runs out of DRAM near the end of a 32K context)
 VARIANTS = {
-    "coder": ("IQ1_M", 256, "expert-profile-coder.bin", "device"),
-    "iq3s": ("IQ3_S", 512, "expert-profile.bin", "cpu"),
+    "coder": ("IQ1_M", 256, "expert-profile-coder.bin", "device", 128),
+    "iq3s": ("IQ3_S", 512, "expert-profile.bin", "cpu", 256),
 }
 
 
@@ -67,7 +68,7 @@ def detect_model(args=()) -> str:
 
 
 MODEL = detect_model()
-QUANT_TAG, N_EXPERT, _PROFILE, DEFAULT_MOE = VARIANTS[MODEL]
+QUANT_TAG, N_EXPERT, _PROFILE, DEFAULT_MOE, DEFAULT_CHUNK = VARIANTS[MODEL]
 _SUF = "" if MODEL == "coder" else f"-{MODEL}"           # per-model artifact directories (the Coder's keep their names)
 
 # ------------------------------------------------------------------------------------------------ repository

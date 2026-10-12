@@ -152,6 +152,13 @@ def kv_write(src, dst, pos_dev, cells: int):
     ttnn.generic_op([src, pos_dev, dst], ttnn.ProgramDescriptor(kernels=[k], semaphores=[], cbs=[cb]))
 
 
+def _pos_page(mesh, p: int):
+    """kv_write's position page for an eager call: uint32 [1, 1, 1, 32] row-major, word 0 = p."""
+    t = torch.zeros((1, 1, 1, 32), dtype=torch.int32)
+    t[0, 0, 0, 0] = int(p)
+    return ttnn.from_torch(t, dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=mesh, memory_config=DRAM)
+
+
 KV_GROUP = 8                     # tokens per kv_append staging group (kernels/qsa/kv_append.cpp G)
 KV_STAGE = POS_PAGE + 2 * N_HEAD_KV * KV_GROUP * HEAD_DIM * (4 + 2)
 
@@ -430,13 +437,18 @@ class Qsa:
             v = ttnn.reshape(ttnn.slice(qkv, [0, 0, 0, 2 * QD + KD], [1, 1, T, 2 * QD + 2 * KD]),
                              [1, T, N_HEAD_KV, HEAD_DIM])
             ttnn.deallocate(qkv)
+            G = KV_ROWS_MAX // N_HEAD_KV                # tokens per kv_write call
             for src, dst in ((kr, self.K), (v, self.V)):
                 s16 = ttnn.typecast(src, ttnn.bfloat16)
                 hm = (ttnn.reshape(s16, [1, N_HEAD_KV, 1, HEAD_DIM]) if T == 1 else ttnn.permute(s16, (0, 2, 1, 3)))
                 rm = ttnn.to_layout(hm, ttnn.ROW_MAJOR_LAYOUT)
-                if step is None:
-                    ttnn.experimental.slice_write(rm, self.K4 if dst is self.K else self.V4, [0, 0, pos[0], 0],
-                                                  [1, N_HEAD_KV, pos[0] + T, HEAD_DIM], [1, 1, 1, 1])
+                if step is None:                        # the position as device data: one program for every cell
+                    for t0 in range(0, T, G):           # (a slice_write bakes its start cell into the program)
+                        t1 = min(T, t0 + G)
+                        part = rm if t1 - t0 == T else ttnn.slice(rm, [0, 0, t0, 0], [1, N_HEAD_KV, t1, HEAD_DIM])
+                        pd = _pos_page(self.mesh, pos[0] + t0)
+                        kv_write(part, dst, pd, self.cells)
+                        _free(pd, *(() if part is rm else (part,)))
                 else:
                     kv_write(rm, dst, step.kv, self.cells)
                 _free(s16, rm, *(() if hm is s16 else (hm,)))

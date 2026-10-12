@@ -214,13 +214,20 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   rows and ran eagerly (traces exist for 1 and `spec` rows only).  IQ3_S, LocalMaxxing protocol (2090-token prose
   prompt, 256 out): 2.15 drafts per window, 155 ms per window, 13.2 tok/s -> full chains 119 ms, 19.4 tok/s; test_serve
   H1 32.1 -> 42.0 tok/s.  The bench (test_trace) builds its drafter with min_p 0 and never saw it.
-- Prompt pieces (fnx.serve_engine.prompt_pieces): whole `--prefill` chunks, then the remainder as power-of-two calls of
-  at most 32 rows (42 -> 32, 8, 2), whose shapes warm_up compiles.  A call of <= 32 rows is bitwise the token-by-token
-  result per row (one tile row; a 42-row call differed by ~0.3 in the logits, IQ3_S, scratch check), so the remainder
-  rows now follow the decode semantics; GSM8K-50 after it: IQ3_S 45 (46 before), Coder 45 (45).  An identical repeated
-  prompt no longer recaptures the traces; prompts of new lengths past position 2050 still compile (and recapture,
-  ~2.7 s of TTFT) until their piece shapes have been seen once.  `--prefill 512` (IQ3_S, 2090-token prompt): prefill
-  152 vs 132 tok/s, decode equal; left at 128 (untested at long context).
+- Prompt reading (2026-10-12).  Pieces (fnx.serve_engine.prompt_pieces): whole `--prefill` chunks, then the remainder
+  as power-of-two calls (piece_sizes; a call of <= 32 rows is bitwise the token-by-token result per row).  warm_up
+  compiles every piece size through the model, then TtModel.warm_prompt_shapes runs one QSA layer's programs of each
+  size at every attention bucket a prompt can reach (dense spans, the 2048 crossing, every sparse block-score width
+  up to the context) and the resident-expert stages at every metadata capacity; the eager prompt K/V writes of QSA
+  (> 32 rows) and of the MTP drafter go through kv_write with the cell as device data (slice_write baked the cell into
+  the program).  So no prompt compiles a program after the start and no request recaptures the traces (scratch probe:
+  11 lengths 77..9100, 0 recaptures; was ~1 per request, 2.7 s of TTFT); warm_up +9 s at start (71 s the first time,
+  kernels then cached).  Prompt chunk per variant (fnx.paths.VARIANTS, `--prefill auto`, setup): IQ3_S 256 (171 ->
+  191 tok/s at 2090 tokens, same load; 512 runs out of DRAM near the end of a 32K context), Coder 128.  IQ3_S teacher
+  forcing at 256 rows is bitwise the 128-row run (20/20 records), GSM8K-50 45.  LocalMaxxing protocol (quiet host):
+  prefill 134 -> 176 tok/s, TTFT 15.6 -> 11.9 s, decode 20.3 tok/s.  What is left is the MoE stage (77% of a prompt
+  read): 38% of the routed slots run on the CPU (IQ3_S expert bytes at the RAM's ~40-46 GB/s, re-read per chunk) and
+  48 card <-> host round trips per chunk.
 - QSA sparse selection: the per-row assembly is native (cpu_experts/fnx_qsa.cpp, fnx.cpu_experts.assemble_selection;
   bounds and the exact rescoring stay numpy / fnx.ref.qsa.block_scores): test_qsa sparse 12410/12410 rows identical
   to the reference, test_trace sparse bitwise.  The traced QSA readback copies into a preallocated host tensor.

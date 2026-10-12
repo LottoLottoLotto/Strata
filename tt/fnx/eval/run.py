@@ -16,7 +16,7 @@ defines a new configuration, e.g. a device-expert build):
            4555, iq3s 4671 experts resident as bfloat8_b, the rest on the CPU)
 
 Teacher forcing (fnx.eval.data's evalset, reference = fnx.eval.torchref's cache): each sequence from a fresh state
-(TtModel.reset), eager TtModel.forward over 128-row chunks (the serve engine's prompt chunk) with head + logits for
+(TtModel.reset), eager TtModel.forward over CHUNK-row calls (the serve engine's prompt chunk) with head + logits for
 the chunks holding scored positions (head=False for the others), scored by fnx.eval.score.  Per record the
 per-position metrics go to FNX_EVAL/runs/NAME/tf/<id>.npz; a run skips records already there and stops starting new
 ones after --max-minutes, so a gate can be split over several short device runs (the device is shared).
@@ -52,7 +52,7 @@ CONFIGS = {
     "bfp8": {"FNX_MOE": "cpu", "FNX_EXPERT_PLACEMENT": str(paths.CACHE / "placement" / BFP8_PLACEMENT)},
 }
 RUNS = data.EVAL / "runs"
-CHUNK = 128
+CHUNK = paths.DEFAULT_CHUNK          # prompt rows per call, as served (the variant's --prefill auto)
 MAX_CTX = 2048
 GSM_MAX_NEW = 512
 STRATA_GSM = data.EVAL / "gsm8k-strata.jsonl"
@@ -257,7 +257,7 @@ def results(name: str) -> dict:
                 f"{g['both_finished']} both finished; token-identical generations {g['identical_text']:.3f}, median "
                 f"first divergence at token {g['first_divergence_median']:.0f}" if "ref_n" in g else "")]
     if res["tf_tok_per_s"]:
-        md += ["", f"teacher-forcing throughput {res['tf_tok_per_s']} tok/s (eager, 128-row chunks; host 1-min load "
+        md += ["", f"teacher-forcing throughput {res['tf_tok_per_s']} tok/s (eager, {CHUNK}-row chunks; host 1-min load "
                    f"average {res['tf_host_load'] or 'not recorded'}; timings are only comparable on a quiet host)"]
     (run / "results.md").write_text("\n".join(md) + "\n")
     return res

@@ -47,12 +47,12 @@ import torch
 import ttnn
 
 from .. import paths
-from ..config import HC, HC_DIM, N_EMBD, N_LAYERS, PLE_LAYER, is_qsa
+from ..config import HC, HC_DIM, N_EMBD, N_LAYERS, N_USED, PLE_LAYER, is_qsa
 from ..ref.embed import embed
 from .gdn import Gdn
 from .hc import HcRead, hc_write
 from .head import Head
-from .moe import Moe
+from .moe import DeviceExperts, Moe
 from .moe_device import F_BFP4, MoeDevice, host_matrices, matrix_bytes, quant_layer
 from .ple import Ple
 from .qsa import Qsa
@@ -198,6 +198,68 @@ class TtModel:
         new programs (fnx.tt.trace.Tracer.ensure), so the cost lands in the time to first token, not in decode."""
         if self._trace is not None and self._win is None:
             self._trace.ensure("after a prompt read")
+
+    def warm_prompt_shapes(self, sizes) -> None:
+        """Compile the QSA programs of prompt calls of every row count in `sizes` at every attention bucket a prompt
+        can reach: each dense span (every 256 positions up to 2304), the dense-to-sparse crossing at position 2048
+        (where chunk-aligned prompts cross it), and each width of the sparse block scores (every 4096 positions up to
+        the context).  One QSA layer runs them (the layers share every program) on zero rows at those positions, then
+        the sequence restarts: the garbage it leaves in the positional KV / indexer state is overwritten before any
+        later call reads it (every cell and block is written before it is attended).  Without this, a prompt of a
+        new length past 2048 compiled programs, and so recaptured every decode trace (~2.7 s, IQ3_S)."""
+        from ..ref.qsa import DENSE_MAX_POS
+        from .qsa import BSPAN, SPAN
+        qsa = next((mix for _, mix, _, _ in self.layers if isinstance(mix, Qsa)), None)
+        if qsa is None:
+            return
+        cap = qsa.max_ctx
+        starts = []
+        for s in sizes:
+            for b in range(SPAN, DENSE_MAX_POS + SPAN + 1, SPAN):   # dense: the call's last row in span bucket b
+                end = min(b, DENSE_MAX_POS + 1, cap) - 1             # (within the model's context)
+                if end - s + 1 >= 0:
+                    starts.append((s, end - s + 1))
+            starts = list(dict.fromkeys(starts))                     # the context cap can repeat a bucket
+            if DENSE_MAX_POS - 2048 + 1 < s and 2048 + s <= cap:  # the chunk-aligned crossing: dense + sparse rows
+                starts.append((s, 2048))
+            seen, k = set(), 1
+            while True:                                           # sparse: every block-score width
+                p0 = max(DENSE_MAX_POS + 1, 4 * BSPAN * (k - 1) + 4)
+                if p0 + s > cap:
+                    break
+                nbs = min(-(-max(p0 // 4, 1) // BSPAN) * BSPAN, qsa.blocks)
+                if nbs not in seen:
+                    seen.add(nbs)
+                    starts.append((s, p0))
+                k += 1
+        for s, p0 in starts:
+            x = ttnn.zeros([1, 1, s, N_EMBD], dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=self.mesh,
+                           memory_config=ttnn.DRAM_MEMORY_CONFIG)
+            _free(qsa.forward(x, list(range(p0, p0 + s))), x)
+        qsa.reset()
+        # the cpu MoE's resident experts: one program pair per metadata capacity (a power of two >= the call's
+        # entries); a real prompt's rows spread over many more experts than warm_up's repeated token reaches
+        devs = [m.dev for _, _, _, m in self.layers if isinstance(m, Moe) and m.dev is not None]
+        n_caps = 0
+        if devs:
+            d, n_res = devs[0], max(len(x.resident) for x in devs)
+            for s in sizes:
+                G = -(-s // 32)
+                ent, route, gs = DeviceExperts.entries(s, np.full((s, N_USED), -1, np.int32),
+                                                       np.zeros((s, N_USED), np.float32))     # G dummy entries
+                c, top = DeviceExperts.s_cap_for(len(ent)), DeviceExperts.s_cap_for(min(N_USED * s, G * n_res))
+                while c <= top:
+                    words, S, _ = DeviceExperts.meta_words(s, ent, route, gs, s_cap=c)
+                    meta = ttnn.from_torch(torch.from_numpy(words.view(np.int32)).reshape(1, 1, 1, -1),
+                                           dtype=ttnn.int32, layout=ttnn.ROW_MAJOR_LAYOUT, device=self.mesh,
+                                           memory_config=ttnn.DRAM_MEMORY_CONFIG)
+                    x = ttnn.zeros([1, 1, s, N_EMBD], dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=self.mesh,
+                                   memory_config=ttnn.DRAM_MEMORY_CONFIG)
+                    xb = d.prepare(x, s)
+                    _free(d.run_fixed(xb, meta, c, s, s_alloc=S), xb, x, meta)
+                    c *= 2
+                    n_caps += 1
+        self.warmed_prompt_calls = len(starts) + n_caps
 
     def embed(self, tokens: np.ndarray):
         """Host IQ4_XS row gather -> R [1, 1, T, 10240] f32 on device (embedding in every stream)."""

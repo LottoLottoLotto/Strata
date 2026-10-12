@@ -61,7 +61,7 @@ from .hc import HcRead, consts, hc_write, mm
 from .moe_device import (F_BF16, F_BFP4, FP, READER, LayerMatrices, MoeDevice, _acc, _cb, _Program, bf16_tiles,
                          host_matrices, matrix_bytes)
 from .packed_matmul import PackedLayout, PackedMatmul, place_packed
-from .qsa import kv_write
+from .qsa import KV_ROWS_MAX, kv_write
 from .tile_argmax import TileArgmax
 
 f32 = np.float32
@@ -121,6 +121,13 @@ def _free(*ts) -> None:
     for t in ts:
         if t is not None:
             ttnn.deallocate(t)
+
+
+def _pos_dev(mesh, p: int):
+    """kv_write's position page: uint32 [1, 1, 1, 32] row-major, word 0 = p."""
+    t = torch.zeros((1, 1, 1, 32), dtype=torch.int32)
+    t[0, 0, 0, 0] = int(p)
+    return ttnn.from_torch(t, dtype=ttnn.uint32, layout=RM, device=mesh, memory_config=DRAM)
 
 
 def _rows(x, r0: int, r1: int):
@@ -592,14 +599,22 @@ class Mtp:
         qr, kr = self._rope(qn, C, S), self._rope(kn, C, S)
         _free(q, k, qn, kn, C, S)
         pos = step.kv_pos() if step is not None else None
-        for src, dst in ((kr, self.K4), (v, self.V4)):
+        G = KV_ROWS_MAX // N_HEAD_KV                    # tokens per kv_write call
+        for src, dst in ((kr, self.K), (v, self.V)):
             hm = ttnn.reshape(src, [1, N_HEAD_KV, 1, HEAD_DIM]) if T == 1 else ttnn.permute(src, (0, 2, 1, 3))
             rm = ttnn.to_layout(hm, RM)
-            if step is None:
-                ttnn.experimental.slice_write(rm, dst, [0, 0, cells[0], 0], [1, N_HEAD_KV, cells[0] + T, HEAD_DIM],
-                                              [1, 1, 1, 1])
+            if step is not None:
+                kv_write(rm, dst, pos, self.cells)
             else:
-                kv_write(rm, self.K if dst is self.K4 else self.V, pos, self.cells)
+                # eager (prompt cells, a request's committed cells): the position goes in as device data, so one
+                # program serves every cell (a slice_write bakes its start cell into the program: a compile, and so
+                # a trace recapture, at almost every request)
+                for t0 in range(0, T, G):
+                    t1 = min(T, t0 + G)
+                    part = rm if t1 - t0 == T else ttnn.slice(rm, [0, 0, t0, 0], [1, N_HEAD_KV, t1, HEAD_DIM])
+                    pd = _pos_dev(self.mesh, cells[0] + t0)
+                    kv_write(part, dst, pd, self.cells)
+                    _free(pd, *(() if part is rm else (part,)))
             _free(rm, *(() if hm is src else (hm,)))
         _free(kr, v, pos)
         return {"R": R, "inj": inj, "qr": qr, "gate": gate, "T": T}

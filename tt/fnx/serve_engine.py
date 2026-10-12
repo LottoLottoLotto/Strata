@@ -99,8 +99,7 @@ CTX_MAX = 32768                # advertised context limit (READY): fnx.tt.qsa's 
 TURN_TOKEN = 248045            # <|im_start|>: the checkpoint goes where the prompt's last one begins
 PENALTY_WINDOW_CAP = 4096      # generate.cpp:5989
 TOP_K_MAX = 64                 # the sampled path's widest list (sampler.cu:423-426)
-DEFAULT_CHUNK = 128            # prompt rows per TtModel call: 16/32/64/128 rows gave 14.7/18.1/21.5/24.9 tok/s
-                               # (256 rows of the code prompt, GdnOps, 2026-10-06)
+DEFAULT_CHUNK = paths.DEFAULT_CHUNK   # prompt rows per TtModel call (`--prefill auto`): the variant's (fnx.paths)
 ERR_EXPECTED = "ERR expected: GEN <max_new> <id,id,...> or GENI <max_new> <file> <id,id,...>"
 DEFAULT_SPEC = 4              # verify-window rows with the MTP drafter (1 + 3 drafts)
 
@@ -572,38 +571,41 @@ def make_drafter(mesh, w, max_ctx: int, k: int, min_p: float = 0.0, model=None, 
     return Drafter(mtp, k, min_p)
 
 
-TILE_ROWS = 32                 # a call of at most this many rows is bitwise the token-by-token result for each row
+def piece_sizes(chunk: int) -> list[int]:
+    """The row counts of prompt calls (prompt_pieces): `chunk`, then the powers of two below it, largest first."""
+    return [chunk] + [1 << b for b in range(chunk.bit_length() - 1, -1, -1) if (1 << b) < chunk]
 
 
 def prompt_pieces(c0: int, c1: int, chunk: int):
-    """Prompt rows [c0, c1) as calls: whole `chunk`-row calls, then the remainder as power-of-two pieces of at most
-    TILE_ROWS rows, largest first (42 -> 32, 8, 2).  The pieces' rows are bitwise the serial decode's (one tile row
-    of the matmuls; a 42-row call differs by ~0.3 in the logits), and their 6 shapes are compiled by warm_up, so a
-    prompt compiles nothing new and the decode traces need no recapture (~2.7 s of time to first token, IQ3_S)."""
+    """Prompt rows [c0, c1) as calls: whole `chunk`-row calls, then the remainder as power-of-two pieces, largest
+    first (300 at chunk 128 -> 128, 128, 32, 8, 4).  Only piece_sizes(chunk) shapes occur, and warm_up compiles all
+    of them (with TtModel.warm_prompt_shapes at every attention bucket), so a prompt compiles nothing new and the
+    decode traces need no recapture (that cost ~2.7 s of time to first token per request of a new length, IQ3_S)."""
     full = c0 + (c1 - c0) // chunk * chunk
     for a in range(c0, full, chunk):
         yield a, a + chunk
     a = full
     while a < c1:
-        s = min(TILE_ROWS, chunk, 1 << ((c1 - a).bit_length() - 1))
+        s = 1 << ((c1 - a).bit_length() - 1)
         yield a, a + s
         a += s
 
 
 def warm_up(model, drafter: Drafter | None, chunk: int) -> None:
-    """Program builds for the prompt chunk and decode shapes, then a fresh sequence.  With the drafter: the first
-    window (1 row), verify windows of 2..1+k rows with every partial commit (1..T rows kept: the PLE window slice,
-    the drafter's catch-up over the kept rows, the residual row it keeps as the tail) and the committed-cells
-    prefill of a request's last window.  Every eager op of a decode step runs here once, so a traced decode
-    (TtModel.enable_trace, captured after this) compiles nothing and never has to recapture.  Starts from a fresh
-    sequence whatever the model held before (a caller may have used it, e.g. the quality gate's teacher forcing)."""
+    """Program builds for the prompt and decode shapes, then a fresh sequence.  Every prompt piece size through the
+    whole model (and the drafter's committed-cells prefill), then TtModel.warm_prompt_shapes: their QSA programs at
+    every attention bucket a prompt can reach.  With the drafter: the first window (1 row), verify windows of 2..1+k
+    rows with every partial commit (1..T rows kept: the PLE window slice, the drafter's catch-up over the kept rows,
+    the residual row it keeps as the tail) and the committed-cells prefill of a request's last window.  Every eager
+    op of a decode step or a prompt runs here once, so a traced decode (TtModel.enable_trace, captured after this)
+    compiles nothing and never has to recapture.  Starts from a fresh sequence whatever the model held before (a
+    caller may have used it, e.g. the quality gate's teacher forcing)."""
     model.reset()
     if drafter is not None:
         drafter.reset()
-    prompt = [TURN_TOKEN] + [198] * (chunk - 1)
-    pieces = [prompt] + [[198] * s for s in sorted({1 << b for b in range(TILE_ROWS.bit_length())
-                                                    if (1 << b) <= min(TILE_ROWS, chunk)}, reverse=True)]
-    for rows in pieces:                                 # the prompt shapes: whole chunks and remainder pieces
+    sizes = piece_sizes(chunk)
+    for i, s in enumerate(sizes):                       # the prompt shapes: whole chunks and remainder pieces
+        rows = ([TURN_TOKEN] if i == 0 else [198]) + [198] * (s - 1)
         if drafter is None:
             model.forward(rows, head=False)
         else:
@@ -611,6 +613,8 @@ def warm_up(model, drafter: Drafter | None, chunk: int) -> None:
             _, _, R = model.forward(rows, head=False, keep_R=True)
             drafter.cells(R, p, rows[1:] + [198])
             model.free_R(R)
+    if hasattr(model, "warm_prompt_shapes"):
+        model.warm_prompt_shapes(sizes)
     if drafter is None:
         model.forward([198], read_logits=True)
     else:

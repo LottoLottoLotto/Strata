@@ -274,6 +274,15 @@ class ToTt(unittest.TestCase):
         c = T.to_tt({"exe": "x", "args": ["--native", "/m/a.gguf"]}, "/d")
         self.assertEqual(c["args"], ["--native", "/m/a.gguf", "--max-context", "32768", "--prefill", "128"])
 
+    def test_each_model_gets_its_prompt_chunk(self):
+        """The prompt chunk is the model's own (fnx.paths.VARIANTS): IQ3_S reads prompts in 256-row calls."""
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FNX_MODEL", None)
+            for native, want in (("/m/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf", "256"),
+                                 ("/m/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf", "128")):
+                c = T.to_tt({"exe": "x", "args": ["--native", native, "--prefill", "auto"]}, "/d")
+                self.assertEqual(c["args"][c["args"].index("--prefill") + 1], want, native)
+
 
 class BuildJson(unittest.TestCase):
     def test_setup_reads_the_numeric_version_and_keeps_the_prompt_chunk(self):

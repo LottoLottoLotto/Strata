@@ -76,7 +76,6 @@ TT_MODELS = {
 }
 VARIANT_ARTIFACTS = {d["variant"]: d["artifacts"] for d in TT_MODELS.values()}
 CTX_MAX = 32768                     # fnx.serve_engine CTX_MAX: fnx.tt.qsa's sparse selection is verified to 32,800
-PREFILL = 128                       # fnx.serve_engine DEFAULT_CHUNK: prompt rows per device call
 IDLE_UNLOAD_S = 900                 # the shared card is given back after 15 idle minutes
 MIN_RAM_GB = min(d["ram_gb"] for d in TT_MODELS.values())   # the card note; each model's own after its choice
 PREP_WORKERS = 4                    # IQ3_S's card caches: layer ranges converted at a time (~8 GB of RAM each)
@@ -518,11 +517,13 @@ def prepare_caches(fnx_data: Path, variant: str, gguf: str) -> None:
 def to_tt(cfg: dict, fnx_data, image: str = DEFAULT_IMAGE) -> dict:
     """setup's config (written for its HIP path) -> the TT engine's: the wrapper as the engine, the engine's own flags
     only (the CUDA engine's - expert cache and profile, KV precision and streaming, VRAM reserve, pool workers, rope,
-    PLE I/O, the control vector - left out), an explicit prompt chunk (setup's 'auto' is the CUDA engine's sizing, and
-    a script engine would read as 0.1.12 to upgrade_config without BUILD.json), the context capped at 32768, FNX_DATA
+    PLE I/O, the control vector - left out), the variant's explicit prompt chunk (fnx.paths.VARIANTS; setup's 'auto'
+    is the CUDA engine's sizing, and a script engine would read as 0.1.12 to upgrade_config without BUILD.json), the
+    context capped at 32768, FNX_DATA
     (and a FNX_IMAGE other than the default) for the wrapper, the shared card given back after 15 idle minutes.  The
     paths stay the host's: tt-engine.sh mounts each one at the same place."""
     args = [str(x) for x in cfg.get("args") or []]
+    prefill = P.VARIANTS[config_variant(cfg)][4]
     out_args, i = [], 0
     while i < len(args):
         f, vals = args[i], []
@@ -531,7 +532,7 @@ def to_tt(cfg: dict, fnx_data, image: str = DEFAULT_IMAGE) -> dict:
             vals.append(args[i])
             i += 1
         if f == "--prefill":
-            out_args += [f, str(PREFILL)]
+            out_args += [f, str(prefill)]
         elif f == "--max-context" and vals and vals[0].isdigit():
             out_args += [f, str(min(int(vals[0]), CTX_MAX))]
         elif f in FNX_ARGS:
@@ -539,7 +540,7 @@ def to_tt(cfg: dict, fnx_data, image: str = DEFAULT_IMAGE) -> dict:
     if "--max-context" not in out_args:
         out_args += ["--max-context", str(CTX_MAX)]
     if "--prefill" not in out_args:
-        out_args += ["--prefill", str(PREFILL)]
+        out_args += ["--prefill", str(prefill)]
     env = {k: v for k, v in (cfg.get("env") or {}).items() if k not in S.SETUP_ENV and k != "FNX_IMAGE"}
     env["FNX_DATA"] = str(fnx_data)
     if image != DEFAULT_IMAGE:
