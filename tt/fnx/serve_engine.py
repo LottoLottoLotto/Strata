@@ -452,8 +452,7 @@ class Engine:
         for to in (turn_at, n - 1):
             if to <= at:
                 continue
-            for c0 in range(at, to, self.chunk):
-                c1 = min(c0 + self.chunk, to)
+            for c0, c1 in prompt_pieces(at, to, self.chunk):
                 if dr is None:
                     m.forward(ids[c0:c1], head=False)
                 else:
@@ -573,6 +572,24 @@ def make_drafter(mesh, w, max_ctx: int, k: int, min_p: float = 0.0, model=None, 
     return Drafter(mtp, k, min_p)
 
 
+TILE_ROWS = 32                 # a call of at most this many rows is bitwise the token-by-token result for each row
+
+
+def prompt_pieces(c0: int, c1: int, chunk: int):
+    """Prompt rows [c0, c1) as calls: whole `chunk`-row calls, then the remainder as power-of-two pieces of at most
+    TILE_ROWS rows, largest first (42 -> 32, 8, 2).  The pieces' rows are bitwise the serial decode's (one tile row
+    of the matmuls; a 42-row call differs by ~0.3 in the logits), and their 6 shapes are compiled by warm_up, so a
+    prompt compiles nothing new and the decode traces need no recapture (~2.7 s of time to first token, IQ3_S)."""
+    full = c0 + (c1 - c0) // chunk * chunk
+    for a in range(c0, full, chunk):
+        yield a, a + chunk
+    a = full
+    while a < c1:
+        s = min(TILE_ROWS, chunk, 1 << ((c1 - a).bit_length() - 1))
+        yield a, a + s
+        a += s
+
+
 def warm_up(model, drafter: Drafter | None, chunk: int) -> None:
     """Program builds for the prompt chunk and decode shapes, then a fresh sequence.  With the drafter: the first
     window (1 row), verify windows of 2..1+k rows with every partial commit (1..T rows kept: the PLE window slice,
@@ -584,12 +601,16 @@ def warm_up(model, drafter: Drafter | None, chunk: int) -> None:
     if drafter is not None:
         drafter.reset()
     prompt = [TURN_TOKEN] + [198] * (chunk - 1)
-    if drafter is None:
-        model.forward(prompt, head=False)
-    else:
-        _, _, R = model.forward(prompt, head=False, keep_R=True)
-        drafter.cells(R, 0, prompt[1:] + [198])
-        model.free_R(R)
+    pieces = [prompt] + [[198] * s for s in sorted({1 << b for b in range(TILE_ROWS.bit_length())
+                                                    if (1 << b) <= min(TILE_ROWS, chunk)}, reverse=True)]
+    for rows in pieces:                                 # the prompt shapes: whole chunks and remainder pieces
+        if drafter is None:
+            model.forward(rows, head=False)
+        else:
+            p = model.pos
+            _, _, R = model.forward(rows, head=False, keep_R=True)
+            drafter.cells(R, p, rows[1:] + [198])
+            model.free_R(R)
     if drafter is None:
         model.forward([198], read_logits=True)
     else:

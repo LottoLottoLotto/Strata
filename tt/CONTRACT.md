@@ -213,9 +213,19 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   eager decode only).  Strata's setup writes --spec-min-p 0.5, which ended chains early, so most verify windows had 2-3
   rows and ran eagerly (traces exist for 1 and `spec` rows only).  IQ3_S, LocalMaxxing protocol (2090-token prose
   prompt, 256 out): 2.15 drafts per window, 155 ms per window, 13.2 tok/s -> full chains 119 ms, 19.4 tok/s; test_serve
-  H1 32.1 -> 42.0 tok/s.  The bench (test_trace) builds its drafter with min_p 0 and never saw it.  Still open at that
-  length: each request recaptures the traces after its prompt (~2.7 s of TTFT: the last prompt chunk's row count is new),
-  and past position 2050 every QSA layer's host step (sparse selection, fnx.tt.qsa.sparse_host) costs ~21 ms per round.
+  H1 32.1 -> 42.0 tok/s.  The bench (test_trace) builds its drafter with min_p 0 and never saw it.
+- Prompt pieces (fnx.serve_engine.prompt_pieces): whole `--prefill` chunks, then the remainder as power-of-two calls of
+  at most 32 rows (42 -> 32, 8, 2), whose shapes warm_up compiles.  A call of <= 32 rows is bitwise the token-by-token
+  result per row (one tile row; a 42-row call differed by ~0.3 in the logits, IQ3_S, scratch check), so the remainder
+  rows now follow the decode semantics; GSM8K-50 after it: IQ3_S 45 (46 before), Coder 45 (45).  An identical repeated
+  prompt no longer recaptures the traces; prompts of new lengths past position 2050 still compile (and recapture,
+  ~2.7 s of TTFT) until their piece shapes have been seen once.  `--prefill 512` (IQ3_S, 2090-token prompt): prefill
+  152 vs 132 tok/s, decode equal; left at 128 (untested at long context).
+- QSA sparse selection: the per-row assembly is native (cpu_experts/fnx_qsa.cpp, fnx.cpu_experts.assemble_selection;
+  bounds and the exact rescoring stay numpy / fnx.ref.qsa.block_scores): test_qsa sparse 12410/12410 rows identical
+  to the reference, test_trace sparse bitwise.  The traced QSA readback copies into a preallocated host tensor.
+  IQ3_S LocalMaxxing protocol: 19.4 -> 20.2 tok/s.  The rest of the host step (~0.6 ms per QSA layer under decode) is
+  numpy contending with the 16 spinning CPU-expert threads (the same code takes ~0.23 ms on an idle host).
 - LM head: `FNX_HEAD=bfp8` (default) | `gptq4` (GPTQ-BFP4 head from `fnx/quant/head.py`; 0.69 ms/token (packed heads:
   1.65 vs 0.97 ms traced) + 0.34 GB DRAM saved). Gated 2026-10-07 on the cpu path: all dPPL +0.17% -> +0.73% (chat +1.19%), top-1 .970 -> .951, KL .008 -> .014;
   GSM8K-50 47/50 (bfp8 head 45/50, Strata 44/50: within n=50 noise); kept OPT-IN (cost/benefit). Every head mode places its 80 uploaded blocks by exact page copies into the bank-packed weight (`fnx.tt.packed_matmul.place_packed`; matmul `PackedMatmul`, bitwise the stock decode matmul and, for rows > 32, the old auto-config call); the old bfp8 concat + typecast

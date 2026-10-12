@@ -126,6 +126,7 @@ class Sequence:
         # host tensor the MoE rows are read into (copy_device_to_host_tensor: no host allocation per layer)
         self.h_both = (ttnn.allocate_tensor_on_host(ttnn.Shape([1, 1, T, N_EMBD + ROUTER_COLS]), ttnn.float32, RM, mesh)
                        if len(self.dev) < m.n_layers else None)
+        self.h_q: dict = {}                           # per QSA layer: the host tensor its [x | s~] rows are read into
         self.E = SimpleNamespace(both={}, qboth={})   # the captured program's device handles; both / qboth: the
                                                       # read-back rows of each layer (kept, never freed)
         self.segs: list[tuple[list, object, str]] = []      # (device functions, host function, kind)
@@ -298,7 +299,12 @@ class Sequence:
         if ctx["mode"] == "warm":            # compile run: any valid cells (no indexer update)
             self.qin.write_ids(np.zeros(int(self.qin.ids.shape[-1]), np.int32))
             return
-        host = ttnn.to_torch(self.E.qboth[L]).float().numpy().reshape(self.T, -1)
+        q = self.E.qboth[L]
+        h = self.h_q.get(L)
+        if h is None or list(h.shape) != list(q.shape) or h.dtype != q.dtype:
+            h = self.h_q[L] = ttnn.allocate_tensor_on_host(ttnn.Shape(list(q.shape)), q.dtype, RM, self.m.mesh)
+        ttnn.copy_device_to_host_tensor(q, h, blocking=True)
+        host = h.to_numpy().astype(np.float32, copy=False).reshape(self.T, -1)
         self.qin.write_ids(mix.sparse_host(host, ctx["pos"]))
         prof = ctx.get("prof")
         if prof is not None:

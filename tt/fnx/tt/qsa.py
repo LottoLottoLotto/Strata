@@ -66,6 +66,7 @@ import ttnn
 
 from .. import paths
 from ..config import COMPRESS, EPS, HEAD_DIM, IDX_DIM, IDX_HEADS, N_EMBD, N_HEAD, N_HEAD_KV, ROPE_DIM
+from ..cpu_experts import assemble_selection
 from ..ref.qsa import DENSE_MAX_POS, GROUP, SEL_WIDTH, block_scores, rms, rope64, rope_cos_sin
 from .head import create_matmul_1d_decode_progcfg
 
@@ -588,42 +589,18 @@ class Qsa:
             cand[k] = ~sure[k] & (hi >= tau_lo[:, None])
         cand[K + 1][e == 0] = False                                                   # rows without a 513th
         need = cand[K] | cand[K + 1]
-        out, n_cand, n_ref = [], 0, 0
-        ar4 = np.arange(COMPRESS)
+        ex = np.zeros((len(ts), nbm), f32)                 # exact scores of every candidate block (fnx_qsa_assemble)
+        n_cand, n_ref = 0, 0
         for i, t in enumerate(ts):
             nd = np.flatnonzero(need[i])
-            vals = np.empty(len(nd), f32)
             if len(nd):
                 old = nd < nb_old
-                vals[old] = block_scores(self.pooled[nd[old]], qin[t])
+                ex[i, nd[old]] = block_scores(self.pooled[nd[old]], qin[t])
                 if not old.all():
-                    vals[~old] = ex_new[i, nd[~old] - nb_old]
-
-            def top(k):
-                s = np.flatnonzero(sure[k][i])
-                r = k - len(s)
-                if r == 0:
-                    return s
-                m = cand[k][i, nd]
-                c, ex = nd[m], vals[m]
-                assert len(c) >= r, "selection bound violated"
-                return np.concatenate([s, c[np.lexsort((c, -ex))[:r]]])
-
-            s512 = np.sort(top(K))
-            parts = [(s512[:, None] * COMPRESS + ar4).ravel()]
-            if e[i]:
-                mark = np.zeros(nbm, bool)
-                mark[top(K + 1)] = True
-                mark[s512] = False
-                extra = np.flatnonzero(mark)
-                assert len(extra) == 1
-                parts.append(extra[0] * COMPRESS + ar4[:e[i]])
-            parts.append(np.arange(nbt[i] * COMPRESS, n[i]))                         # tail: forced by the bias
-            cells = np.sort(np.concatenate(parts))
-            assert len(cells) == SEL_WIDTH
-            out.append(cells)
+                    ex[i, nd[~old]] = ex_new[i, nd[~old] - nb_old]
             n_cand += len(nd)
             n_ref += bool(len(nd))
+        out = assemble_selection(np.stack([sure[K], sure[K + 1]]), np.stack([cand[K], cand[K + 1]]), ex, e, nbt, n)
         st.update(cand=n_cand, refined_rows=n_ref, sparse_rows=len(ts))
         if self.debug:                                          # every device score against its exact value
             ratios = []

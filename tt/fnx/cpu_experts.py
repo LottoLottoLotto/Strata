@@ -1,5 +1,6 @@
-"""ctypes binding of libfnx_cpu.so: Flash-Next routed experts on the host CPU with Strata's kernels, and the cpu
-MoE's native routing step (`route`, cpu_experts/fnx_route.cpp)."""
+"""ctypes binding of libfnx_cpu.so: Flash-Next routed experts on the host CPU with Strata's kernels, the cpu MoE's
+native routing step (`route`, cpu_experts/fnx_route.cpp) and the QSA selection's per-row assembly
+(`assemble_selection`, cpu_experts/fnx_qsa.cpp)."""
 from __future__ import annotations
 
 import ctypes as C
@@ -32,7 +33,10 @@ def lib(path: str | None = None):
         L.fnx_route.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_double,
                                 C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_int,
                                 C.POINTER(C.c_int)]
-        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_wait, L.fnx_route):
+        L.fnx_qsa_assemble.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p,
+                                       C.c_void_p, C.c_void_p, C.c_int, C.c_void_p]
+        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_wait, L.fnx_route,
+                  L.fnx_qsa_assemble):
             f.restype = C.c_int
         _LIB = L
     return _LIB
@@ -65,6 +69,25 @@ def route(lg: np.ndarray, x: np.ndarray, wr: np.ndarray, wr_norm: np.ndarray, lo
     if r < 0:
         raise ValueError(f"fnx_route: {'entries exceed s_cap ' + str(s_cap) if r == -1 else 'metadata needs T <= 32'}")
     return ids, wt, cpu_ids, r, words, n_ent.value
+
+
+QSA_TOPK, QSA_WIDTH = 512, 2051     # fnx.tt.qsa.TOPK_BLOCKS, fnx.ref.qsa.SEL_WIDTH
+
+
+def assemble_selection(sure: np.ndarray, cand: np.ndarray, ex: np.ndarray, e, nbt, n) -> list[np.ndarray]:
+    """fnx.tt.qsa's sparse selection per row (fnx_qsa.cpp): sure / cand bool [2, R, nbm] (top K, top K + 1), ex f32
+    [R, nbm] the exact scores of the candidates, e / nbt / n [R] -> each row's ascending cells, int32 [SEL_WIDTH]."""
+    R, nbm = ex.shape
+    s = np.ascontiguousarray(sure, np.uint8)
+    c = np.ascontiguousarray(cand, np.uint8)
+    x = np.ascontiguousarray(ex, np.float32)
+    e, nbt, n = (np.ascontiguousarray(v, np.int32) for v in (e, nbt, n))
+    cells = np.empty((R, QSA_WIDTH), np.int32)
+    r = lib().fnx_qsa_assemble(R, nbm, QSA_TOPK, s.ctypes.data, c.ctypes.data, x.ctypes.data, e.ctypes.data,
+                               nbt.ctypes.data, n.ctypes.data, QSA_WIDTH, cells.ctypes.data)
+    if r:
+        raise AssertionError(f"selection bound violated (row {-r - 1})")
+    return list(cells)
 
 
 TYPE_IDS = {"IQ2_XXS": 16, "IQ2_XS": 17, "IQ3_XXS": 18, "IQ1_S": 19, "IQ4_NL": 20, "IQ3_S": 21, "IQ2_S": 22,

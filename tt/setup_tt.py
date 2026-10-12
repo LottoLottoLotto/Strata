@@ -403,7 +403,7 @@ def cpu_src() -> str:
     """A fingerprint of the CPU expert library's sources (tt/cpu_experts and Strata's engine sources): when a `git pull`
     changes them, it is compiled again."""
     h = hashlib.sha256(S.source_hash(S.ENGINE_SOURCES).encode())
-    for f in ("CMakeLists.txt", "fnx_cpu.cpp", "fnx_route.cpp"):
+    for f in ("CMakeLists.txt", "fnx_cpu.cpp", "fnx_route.cpp", "fnx_qsa.cpp"):
         h.update((CPU_BUILD.parent / f).read_bytes())
     return h.hexdigest()[:16]
 
