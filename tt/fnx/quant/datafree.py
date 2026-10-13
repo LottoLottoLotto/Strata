@@ -62,6 +62,23 @@ def read_counts(stats_dir: Path | str | None = None) -> np.ndarray:
     return np.stack([order // N_EXPERT, order % N_EXPERT], 1).astype(np.int32)
 
 
+# the cpu MoE's resident experts per variant (fnx.tt.moe, FNX_EXPERT_PLACEMENT unset): (N, format) = the N hottest
+# (layer, expert) pairs by the variant's measured routing counts (read_counts) in that format: bfloat8_b, bfloat4_b
+# (min-MSE BFP4 of the GGUF values), gptq4 (BFP4 from fnx.quant.residents' GPTQ store).  N = tools/expert_placement.py
+# --measure --dtype: free DRAM after the model - 3 GB headroom - 0.5 GB MTP drafter.  The Coder's cpu MoE keeps every
+# routed expert on the CPU (its default MoE is the device one).  iq3s: 8823 BFP4 experts (user's choice 2026-10-11:
+# MTP +20% over bfp8-4671), GPTQ since 2026-10-13: KL .0279, perplexity -0.66%, GSM8K-50 45 (min-MSE bfloat4_b:
+# KL .0437, -2.21%, 45; see CONTRACT); bfp8-4671 (KL .0066) via a placement file (tools/expert_placement.py --counts
+# ... --dtype bfloat8_b).
+DEFAULT_RESIDENT = {"coder": (0, "bfloat8_b"), "iq3s": (8823, "gptq4")}
+
+
+def resident_layers(n: int) -> list[np.ndarray]:
+    """Per-layer sorted expert ids (int32) of the n hottest (layer, expert) pairs (read_counts)."""
+    top = read_counts()[:n]
+    return [np.sort(top[top[:, 0] == L, 1]).astype(np.int32) for L in range(N_LAYERS)]
+
+
 def quantize_layer(L: int, shard1: str, out_dir: str, chunk: int, threads: int) -> tuple[int, float]:
     """Layer L's N_EXPERT x 3 matrices -> pool files (written under a .tmp name, then renamed).  Returns (L, s)."""
     import torch

@@ -100,34 +100,25 @@ def load_placement(path: str | os.PathLike) -> list[np.ndarray]:
 
 
 _PLACEMENT: dict[str, tuple[list[np.ndarray], str]] = {}
-# the cpu MoE's resident experts per variant when FNX_EXPERT_PLACEMENT is unset: (N, dtype) = the N hottest (layer,
-# expert) pairs by the variant's measured routing counts (FNX_QUANT_DIR/stats, tools/route_counts.py) in that format
-# (N = tools/expert_placement.py --measure --dtype: free DRAM after the model - 3 GB headroom - 0.5 GB MTP drafter).
-# The Coder's cpu MoE keeps every routed expert on the CPU (its default MoE is the device one).  iq3s: 8823 min-MSE
-# BFP4 experts (user's choice 2026-10-11: MTP +20% over bfp8-4671 at KL .0437, GSM8K-50 46; perplexity -2.2%, see
-# CONTRACT); bfp8-4671 (KL .0066) via a placement file (tools/expert_placement.py --counts ... --dtype bfloat8_b).
-DEFAULT_RESIDENT = {"coder": (0, "bfloat8_b"), "iq3s": (8823, "bfloat4_b")}
+RESIDENT_FORMATS = ("bfloat8_b", "bfloat4_b", "gptq4")   # gptq4: bfloat4_b holding fnx.quant.residents' GPTQ values
 
 
 def _placement() -> tuple[list[np.ndarray], str]:
-    """(per-layer sorted resident ids, ttnn dtype name): the placement file FNX_EXPERT_PLACEMENT (its "dtype",
-    default bfloat8_b; set but empty: none), else the variant's DEFAULT_RESIDENT by measured routing counts."""
+    """(per-layer sorted resident ids, format in RESIDENT_FORMATS): the placement file FNX_EXPERT_PLACEMENT (its
+    "dtype", default bfloat8_b; set but empty: none), else the variant's fnx.quant.datafree.DEFAULT_RESIDENT."""
     p = os.environ.get("FNX_EXPERT_PLACEMENT")
     if p is None:
+        from ..quant.datafree import DEFAULT_RESIDENT, resident_layers
         n, dt = DEFAULT_RESIDENT[paths.MODEL]
         p = f"counts:{n}:{dt}"
         if p not in _PLACEMENT:
-            if n:
-                from ..quant.datafree import read_counts
-                top = read_counts()[:n]
-                layers = [np.sort(top[top[:, 0] == l, 1]).astype(np.int32) for l in range(N_LAYERS)]
-            else:
-                layers = [np.zeros(0, np.int32)] * N_LAYERS
-            _PLACEMENT[p] = (layers, dt)
+            _PLACEMENT[p] = (resident_layers(n) if n else [np.zeros(0, np.int32)] * N_LAYERS, dt)
     elif not p:
         return [np.zeros(0, np.int32)] * N_LAYERS, "bfloat8_b"
     if p not in _PLACEMENT:
         _PLACEMENT[p] = (load_placement(p), json.loads(Path(p).read_text()).get("dtype", "bfloat8_b"))
+    if _PLACEMENT[p][1] not in RESIDENT_FORMATS:
+        raise ValueError(f"resident expert format {_PLACEMENT[p][1]!r}: one of {', '.join(RESIDENT_FORMATS)}")
     return _PLACEMENT[p]
 
 
@@ -136,12 +127,9 @@ def default_resident(L: int) -> np.ndarray:
     return _placement()[0][L]
 
 
-def resident_dtype():
-    """The resident experts' ttnn dtype (_placement: bfloat8_b, or bfloat4_b = min-MSE-snapped BFP4)."""
-    dt = _placement()[1]
-    if dt not in ("bfloat8_b", "bfloat4_b"):
-        raise ValueError(f"resident expert dtype {dt!r}: bfloat8_b or bfloat4_b")
-    return getattr(ttnn, dt)
+def resident_format() -> str:
+    """The resident experts' format (_placement): bfloat8_b, bfloat4_b (min-MSE-snapped BFP4) or gptq4."""
+    return _placement()[1]
 
 
 def snap_bfp4(a: np.ndarray, rows: int = 32768) -> np.ndarray:
@@ -240,9 +228,10 @@ class DeviceExperts:
     `resident`: sorted expert ids kept on the device (non-empty); `local[e]` = their index there, -1 for the CPU's.
     mesh None: host-only conversion of the weight caches."""
 
-    def __init__(self, mesh, w, L: int, resident, routed_dtype=ttnn.bfloat8_b, fidelity=ttnn.MathFidelity.HiFi4):
-        """routed_dtype bfloat4_b: the experts' values are first snapped to their min-MSE BFP4 grid (snap_bfp4),
-        which tt-metal's conversion then keeps (its own round-to-nearest BFP4 has the larger error)."""
+    def __init__(self, mesh, w, L: int, resident, fmt: str = "bfloat8_b", fidelity=ttnn.MathFidelity.HiFi4):
+        """fmt (RESIDENT_FORMATS): bfloat8_b; bfloat4_b, the experts' values first snapped to their min-MSE BFP4 grid
+        (snap_bfp4), which tt-metal's conversion then keeps (its own round-to-nearest BFP4 has the larger error);
+        gptq4, bfloat4_b holding the layer's GPTQ values (fnx.quant.residents store, same experts), kept likewise."""
         self.mesh, self.L, self.fidelity = mesh, L, fidelity
         self.resident = np.asarray(sorted(int(e) for e in resident), np.int32)
         n = len(self.resident)
@@ -266,13 +255,20 @@ class DeviceExperts:
                 a[i * N_EMBD:(i + 1) * N_EMBD] = model.get_expert(f"blk.{L}.ffn_down_exps.weight", int(e))
             return a
 
-        if routed_dtype == ttnn.bfloat4_b:
+        if fmt == "bfloat4_b":
             raw_gu, raw_dn = gate_up, down
             gate_up, down = (lambda: snap_bfp4(raw_gu())), (lambda: snap_bfp4(raw_dn()))
             tag += "-s4"
-        self.gu = _weight(mesh, f"blk.{L}.ffn_gate_up_exps.n{n}-{tag}", gate_up, routed_dtype)
-        self.dn = _weight(mesh, f"blk.{L}.ffn_down_exps.n{n}-{tag}", down, routed_dtype)
-        self.dtype = routed_dtype
+        elif fmt == "gptq4":
+            from ..quant import residents
+            tag += f"-g4{residents.layer_digest(L, self.resident)[:8]}"
+            gate_up = lambda: residents.load_layer(L, self.resident, "gate_up")    # noqa: E731
+            down = lambda: residents.load_layer(L, self.resident, "down")          # noqa: E731
+        elif fmt != "bfloat8_b":
+            raise ValueError(f"resident expert format {fmt!r}: one of {', '.join(RESIDENT_FORMATS)}")
+        self.dtype = ttnn.bfloat8_b if fmt == "bfloat8_b" else ttnn.bfloat4_b
+        self.gu = _weight(mesh, f"blk.{L}.ffn_gate_up_exps.n{n}-{tag}", gate_up, self.dtype)
+        self.dn = _weight(mesh, f"blk.{L}.ffn_down_exps.n{n}-{tag}", down, self.dtype)
 
     def nbytes(self) -> int:
         """Device DRAM bytes of the resident routed experts."""
@@ -390,9 +386,9 @@ class Plan:
 
 class Moe:
     def __init__(self, mesh, w, L: int, experts, shared_dtype=ttnn.bfloat8_b, resident=None,
-                 routed_dtype=None, fidelity=ttnn.MathFidelity.HiFi4):
+                 resident_fmt=None, fidelity=ttnn.MathFidelity.HiFi4):
         """resident: expert ids of layer L to keep on the device (default: default_resident(L), i.e. the placement
-        file FNX_EXPERT_PLACEMENT, else the variant's default); routed_dtype: theirs (default resident_dtype())."""
+        file FNX_EXPERT_PLACEMENT, else the variant's default); resident_fmt: theirs (default resident_format())."""
         self.mesh, self.L, self.experts = mesh, L, experts
         self.cfg = _hifi4()
         Wr = np.ascontiguousarray(w.layer(L, "ffn_gate_inp.weight"), np.float32)        # (N_EXPERT, 2560) BF16 values
@@ -409,8 +405,8 @@ class Moe:
         self.wu = _weight(mesh, f"blk.{L}.ffn_up_shexp.weight", w.layer(L, "ffn_up_shexp.weight").T, sd)
         self.wd = _weight(mesh, f"blk.{L}.ffn_down_shexp.weight", w.layer(L, "ffn_down_shexp.weight").T, sd)
         res = default_resident(L) if resident is None else np.asarray(resident, np.int32)
-        routed_dtype = resident_dtype() if routed_dtype is None else routed_dtype
-        self.dev = DeviceExperts(mesh, w, L, res, routed_dtype=routed_dtype, fidelity=fidelity) if len(res) else None
+        fmt = resident_format() if resident_fmt is None else resident_fmt
+        self.dev = DeviceExperts(mesh, w, L, res, fmt=fmt, fidelity=fidelity) if len(res) else None
         self.local = self.dev.local if self.dev else np.full(N_EXPERT, -1, np.int32)
         self.last: dict = {}
 
@@ -530,15 +526,14 @@ def main() -> int:
     lo, _, hi = a.layers.partition("-")
     if a.prepare == "default":
         os.environ.pop("FNX_EXPERT_PLACEMENT", None)
-        placement, dtype = [default_resident(L) for L in range(N_LAYERS)], resident_dtype()
     else:
-        placement = load_placement(a.prepare)
-        dtype = getattr(ttnn, json.loads(Path(a.prepare).read_text()).get("dtype", "bfloat8_b"))
+        os.environ["FNX_EXPERT_PLACEMENT"] = a.prepare
+    placement, fmt = [default_resident(L) for L in range(N_LAYERS)], resident_format()
     w = Weights(a.gguf)
     for L in range(int(lo), int(hi or lo) + 1):
         t0 = time.time()
         if len(placement[L]):
-            DeviceExperts(None, w, L, placement[L], routed_dtype=dtype)
+            DeviceExperts(None, w, L, placement[L], fmt=fmt)
         print(f"layer {L}: {len(placement[L])} resident experts cached in {time.time() - t0:.1f} s", flush=True)
     return 0
 

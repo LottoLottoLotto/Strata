@@ -1,6 +1,6 @@
 {
  "repo": "Lottolabs/Qwen3.8-Flash-Next-Coder-P150",
- "revision": "1f12b75040bddb0deac5409b29c1901283320e78",
+ "revision": "69e738b2c8602ca93097ba0261a7649e4e71df04",
  "plan": "bfp4-tiered-2.4e+10",
  "files": [
   {
@@ -1217,6 +1217,491 @@
    "path": "mtp/expert-profile.npy",
    "size": 4224,
    "sha256": "0553f6e748884d006ff7f7d1a78f52b52abbb42a47ff42f82ebe092553d16995"
+  },
+  {
+   "path": "quant-iq3s/residents/manifest.json",
+   "size": 4070,
+   "sha256": "f4ef0e97ecf0c01cc9b40a96812670007b5a2e725a208d6579c8b162026c2a6d"
+  },
+  {
+   "path": "quant-iq3s/residents/L00.npy",
+   "size": 611020928,
+   "sha256": "7235bf9ea33ecedc39c6901c5c88e7e65fd9bba0eec98b921be3bb695de5bff1"
+  },
+  {
+   "path": "quant-iq3s/residents/L00.ids.npy",
+   "size": 1012,
+   "sha256": "9f007af5d5b1b9dfbf5216f9319e1669324491aeb56423f9e1acf442f46ae0ea"
+  },
+  {
+   "path": "quant-iq3s/residents/L01.npy",
+   "size": 611020928,
+   "sha256": "a143e63f6b2dfd4f4c38f93b0a2c4553fb839c931684c05f2f2becae538d7ea3"
+  },
+  {
+   "path": "quant-iq3s/residents/L01.ids.npy",
+   "size": 1012,
+   "sha256": "34ec8ef48084643fc5c6dcad2179d93f0a47eaa81d2bb605dd1b4571ac9a465d"
+  },
+  {
+   "path": "quant-iq3s/residents/L02.npy",
+   "size": 588902528,
+   "sha256": "47aead4d680e2327d7574020bd7b87a79f56e4ede1efc9ddf060d317c7b8a9d2"
+  },
+  {
+   "path": "quant-iq3s/residents/L02.ids.npy",
+   "size": 980,
+   "sha256": "83ced8290db8981dacfd5f82d717f9ddeecd24347f1dab89a809abdcd0d08c1f"
+  },
+  {
+   "path": "quant-iq3s/residents/L03.npy",
+   "size": 478310528,
+   "sha256": "3991be1490edefb9d5aac7def1597824156c47df5cb274a292a11a0e98b87308"
+  },
+  {
+   "path": "quant-iq3s/residents/L03.ids.npy",
+   "size": 820,
+   "sha256": "e0ce2390e13a0a2621dab8f43757bfa60c6e6b097678ca20cd8a50aa339bb654"
+  },
+  {
+   "path": "quant-iq3s/residents/L04.npy",
+   "size": 511488128,
+   "sha256": "1d1c913eac69b1ce19a9e1d146355af2d2ffde648d866207923390621b667cea"
+  },
+  {
+   "path": "quant-iq3s/residents/L04.ids.npy",
+   "size": 868,
+   "sha256": "e347e3c5d2ec739de34fe5b40e43fb6ea211099cf4778e302753e09fb880653c"
+  },
+  {
+   "path": "quant-iq3s/residents/L05.npy",
+   "size": 472780928,
+   "sha256": "6ff9bbc874582bf75a7adc39084bb00b6ca44378ff9e639d4ad4340f58fb67a2"
+  },
+  {
+   "path": "quant-iq3s/residents/L05.ids.npy",
+   "size": 812,
+   "sha256": "ce404329171317b717152e86f00a0ae34e7570b018cb59e9bf670232f859b71c"
+  },
+  {
+   "path": "quant-iq3s/residents/L06.npy",
+   "size": 550195328,
+   "sha256": "52ba224e083a0d624321a336d1570b245df09766735db41dc486f2da933965ef"
+  },
+  {
+   "path": "quant-iq3s/residents/L06.ids.npy",
+   "size": 924,
+   "sha256": "2be440bd97af5784deb7329f996ad55673e76acecef7a3eba3832fa0c5e68399"
+  },
+  {
+   "path": "quant-iq3s/residents/L07.npy",
+   "size": 525312128,
+   "sha256": "ce139c0ba375981eef80205c35b3f2f76bec89cd2bcb8d062568957cdc405096"
+  },
+  {
+   "path": "quant-iq3s/residents/L07.ids.npy",
+   "size": 888,
+   "sha256": "de59da34c6c19c8559dd75530e48b4e80a961c2bd678fded61226615f474efe3"
+  },
+  {
+   "path": "quant-iq3s/residents/L08.npy",
+   "size": 547430528,
+   "sha256": "d7bcdfe5d233b295cb918549543a376493faae5d65086d7233bc94285f1bc7f2"
+  },
+  {
+   "path": "quant-iq3s/residents/L08.ids.npy",
+   "size": 920,
+   "sha256": "f7c64a044cb253c737c951a67c1f073cf51526adea0698d90fc4223cf447d19c"
+  },
+  {
+   "path": "quant-iq3s/residents/L09.npy",
+   "size": 500428928,
+   "sha256": "e4b64fbccb61e810e1d6559a33c86f8e34ff421870b9f073ea9f90e05ccaf983"
+  },
+  {
+   "path": "quant-iq3s/residents/L09.ids.npy",
+   "size": 852,
+   "sha256": "656a006fec4c66bc5743bfd6b699078fff2585801be33dde30f698603bb15cec"
+  },
+  {
+   "path": "quant-iq3s/residents/L10.npy",
+   "size": 508723328,
+   "sha256": "3ddc53b888213cea0ac973385c74c9c3b7a4180c15285ef94966fcd39c10bad8"
+  },
+  {
+   "path": "quant-iq3s/residents/L10.ids.npy",
+   "size": 864,
+   "sha256": "60b92df1f2cd609de5318061fff2cf62c4df78c83254b7d5ad528c238d63ee7c"
+  },
+  {
+   "path": "quant-iq3s/residents/L11.npy",
+   "size": 519782528,
+   "sha256": "94419cec2b83a2cddcb3996c8fba50c6465e9380c595a1f1b55a040d5ccaeea5"
+  },
+  {
+   "path": "quant-iq3s/residents/L11.ids.npy",
+   "size": 880,
+   "sha256": "600d09783f7be2ef9d17bf43c77c536427cee825bcaea09f73c94b3fe387ce3a"
+  },
+  {
+   "path": "quant-iq3s/residents/L12.npy",
+   "size": 539136128,
+   "sha256": "e617d303987de7d6cb2fb1b0191a983e596ba7937cc40708ee408f1b573beed3"
+  },
+  {
+   "path": "quant-iq3s/residents/L12.ids.npy",
+   "size": 908,
+   "sha256": "272e717eac3b00c7c5fbd907240c040ede87132cba9343e20dd9db946f1514fb"
+  },
+  {
+   "path": "quant-iq3s/residents/L13.npy",
+   "size": 489369728,
+   "sha256": "be9dd3ef346d02c1804dc38898922dcb7cb935a155902e217b85c0888094a6eb"
+  },
+  {
+   "path": "quant-iq3s/residents/L13.ids.npy",
+   "size": 836,
+   "sha256": "00465319d6fd0f786d7e7ad903c6a384d0ced6a8090e9ea61c29de543e99ae78"
+  },
+  {
+   "path": "quant-iq3s/residents/L14.npy",
+   "size": 475545728,
+   "sha256": "cd7214df1e2126cc0f7ac12e9e8b990c8c68eefd612e4b5a6f598da58ed14340"
+  },
+  {
+   "path": "quant-iq3s/residents/L14.ids.npy",
+   "size": 816,
+   "sha256": "377bdc6a1c6a2c9e49c74cda88ea981bb901bb318e96a74b7d2afd4c0950cb1c"
+  },
+  {
+   "path": "quant-iq3s/residents/L15.npy",
+   "size": 436838528,
+   "sha256": "0fa2111cae3f68fe0eebd0f8c84606540481e49deed72196ee4dad69314dacf9"
+  },
+  {
+   "path": "quant-iq3s/residents/L15.ids.npy",
+   "size": 760,
+   "sha256": "6dd720f61b007ae444ae214b68f3089c0790b7760b5fd6c854e7c05700b0816b"
+  },
+  {
+   "path": "quant-iq3s/residents/L16.npy",
+   "size": 428544128,
+   "sha256": "7e307fe89cf07c4607cd1379f9db12e1cae570793339bd2c8ad770335816a932"
+  },
+  {
+   "path": "quant-iq3s/residents/L16.ids.npy",
+   "size": 748,
+   "sha256": "cad4dd6f2ff1f572fb5d1673775a6572120e7d71e4b5af482a34f425b5723b48"
+  },
+  {
+   "path": "quant-iq3s/residents/L17.npy",
+   "size": 525312128,
+   "sha256": "3a3bba544f1a6bcfcb054dce631b680ea889c932a23ad0db0e3d0890609b134e"
+  },
+  {
+   "path": "quant-iq3s/residents/L17.ids.npy",
+   "size": 888,
+   "sha256": "22fceeceed02d5ee0dbbcc8b3cb2f027f2ef461b4dac8c133791e426d578b6ae"
+  },
+  {
+   "path": "quant-iq3s/residents/L18.npy",
+   "size": 550195328,
+   "sha256": "c23f6f776367ce1a44e8d20a6d353f29fa23aa08cb824409a0a49b1a1cbe22ef"
+  },
+  {
+   "path": "quant-iq3s/residents/L18.ids.npy",
+   "size": 924,
+   "sha256": "5d8926a7365e88a5c8dcffcd44d6be3fe8a4671288441a6a85cbd07a4ebef294"
+  },
+  {
+   "path": "quant-iq3s/residents/L19.npy",
+   "size": 500428928,
+   "sha256": "b3d58c1e9b636122957c6d08391de046c3544415bbce50b8ee9666efbbe61f97"
+  },
+  {
+   "path": "quant-iq3s/residents/L19.ids.npy",
+   "size": 852,
+   "sha256": "5e7c142b6b07f12825f108aff9b8ebe3c1f83ebf09ba90029ac7a2cfb4517570"
+  },
+  {
+   "path": "quant-iq3s/residents/L20.npy",
+   "size": 558489728,
+   "sha256": "ecc89b295bd8682c040c2cd96135911b8907b08e5374068cefb08726c471cef6"
+  },
+  {
+   "path": "quant-iq3s/residents/L20.ids.npy",
+   "size": 936,
+   "sha256": "21040f98a401f008ca76a79ff11e2810ffa2f656b5f03c76b548cb9b187699b6"
+  },
+  {
+   "path": "quant-iq3s/residents/L21.npy",
+   "size": 525312128,
+   "sha256": "de09d8883035e9f8de30c7f0697c8b4e6cc5c03d9d1328fb378b7c655805569f"
+  },
+  {
+   "path": "quant-iq3s/residents/L21.ids.npy",
+   "size": 888,
+   "sha256": "eb01772266ef7ff427eee84fd288302c5b6c2f01a863562a5571c72a3def1d58"
+  },
+  {
+   "path": "quant-iq3s/residents/L22.npy",
+   "size": 605491328,
+   "sha256": "791ca128c6743ac855b57f517d0725d5af6ce68fd4bb076bcf964eb35a87b3d7"
+  },
+  {
+   "path": "quant-iq3s/residents/L22.ids.npy",
+   "size": 1004,
+   "sha256": "00dc53ef46b71946620ce65b0d8efc6003cf3a688c871330def1f4a627051dee"
+  },
+  {
+   "path": "quant-iq3s/residents/L23.npy",
+   "size": 514252928,
+   "sha256": "d2ad1bd091c3502a0abeff12820173971e6230253b515e4a76d429c3bd3f458e"
+  },
+  {
+   "path": "quant-iq3s/residents/L23.ids.npy",
+   "size": 872,
+   "sha256": "9e543388fb997075b3cab6b34f31bc18550c2faaabebf01dc2e3622493cb7fd7"
+  },
+  {
+   "path": "quant-iq3s/residents/L24.npy",
+   "size": 514252928,
+   "sha256": "94912708bcd4cc156bc5e3273b474f5e0cb2df3e9a659ece74f8c195d99c91af"
+  },
+  {
+   "path": "quant-iq3s/residents/L24.ids.npy",
+   "size": 872,
+   "sha256": "5183b987c46d9dc0b8d1cfc9d5674a2333bdd61c3c979220ac85adfdd4430b29"
+  },
+  {
+   "path": "quant-iq3s/residents/L25.npy",
+   "size": 461721728,
+   "sha256": "7facee114b12230340270ae69e5ad0a5620b37f715a69303989889fb1a4ee8d6"
+  },
+  {
+   "path": "quant-iq3s/residents/L25.ids.npy",
+   "size": 796,
+   "sha256": "4a8bfbf43d148b74d5df63ee13b62df758cc8481420a63979e44a30ce9ed15aa"
+  },
+  {
+   "path": "quant-iq3s/residents/L26.npy",
+   "size": 486604928,
+   "sha256": "3ddd3b7a85722b9aed73d6797d36c75c86df3c6a747d38e268c18035635ae723"
+  },
+  {
+   "path": "quant-iq3s/residents/L26.ids.npy",
+   "size": 832,
+   "sha256": "26f8fa9fec7a7ed1788872596a4195c2bbe798712ba61fe53fec2c78c93e2bc0"
+  },
+  {
+   "path": "quant-iq3s/residents/L27.npy",
+   "size": 475545728,
+   "sha256": "0d006b2b30615d10d1f722a91094a56d6b09673543379c9287718062197926b9"
+  },
+  {
+   "path": "quant-iq3s/residents/L27.ids.npy",
+   "size": 816,
+   "sha256": "c36f26b23e7511ca8d7aa45a0c4638e460c07863adde014805006dc86a201b5f"
+  },
+  {
+   "path": "quant-iq3s/residents/L28.npy",
+   "size": 439603328,
+   "sha256": "d92bb539e5649a4d5fb83e798d7c01a706e3cceac45f44bdb9cd0afe98a34069"
+  },
+  {
+   "path": "quant-iq3s/residents/L28.ids.npy",
+   "size": 764,
+   "sha256": "b3707865d056536793330fa57078f4f47a1e9357d806212f2b8c03d926318812"
+  },
+  {
+   "path": "quant-iq3s/residents/L29.npy",
+   "size": 486604928,
+   "sha256": "ca5d371aaa03d860bc2015d8ba79628f13192d370d7ba72aefaa3f30571c41d8"
+  },
+  {
+   "path": "quant-iq3s/residents/L29.ids.npy",
+   "size": 832,
+   "sha256": "33c1c354d1e5e49773c6cee4638ed65eb89849df4e17802fd48bab83b7aa1ed3"
+  },
+  {
+   "path": "quant-iq3s/residents/L30.npy",
+   "size": 481075328,
+   "sha256": "876e433b82204625bbfc4e1d77965f006929be83297d52a405468b0cb7f27cce"
+  },
+  {
+   "path": "quant-iq3s/residents/L30.ids.npy",
+   "size": 824,
+   "sha256": "8ec551a309524346c1e90bb09f3d7c3a9dc4a3b25c1fe81784016103eba32a87"
+  },
+  {
+   "path": "quant-iq3s/residents/L31.npy",
+   "size": 475545728,
+   "sha256": "a9a11c472a702821dd7fd2f7a462f9eb7d66a0476209c8d6af8a26676c9d5487"
+  },
+  {
+   "path": "quant-iq3s/residents/L31.ids.npy",
+   "size": 816,
+   "sha256": "ce723c7a3f7c984324ed394011a8b6b932bb6d542b9710341f982e7f8eb96e00"
+  },
+  {
+   "path": "quant-iq3s/residents/L32.npy",
+   "size": 436838528,
+   "sha256": "34f7ff3604541a48f3112c61dc6e98c80935be3d2a5530feae8f42094711e619"
+  },
+  {
+   "path": "quant-iq3s/residents/L32.ids.npy",
+   "size": 760,
+   "sha256": "370cbc994a7b5592e7dfcc6c66ef6d179e4b919bc2eb04b864f856bb2a7a21cc"
+  },
+  {
+   "path": "quant-iq3s/residents/L33.npy",
+   "size": 536371328,
+   "sha256": "f9102dbdefad00812b71e0c385edc6a04089081057d8437a9c64f802507957bb"
+  },
+  {
+   "path": "quant-iq3s/residents/L33.ids.npy",
+   "size": 904,
+   "sha256": "46a712136129384397387e9b7a0950d498ef674ebcbab5d88a7c2f9aff8121e8"
+  },
+  {
+   "path": "quant-iq3s/residents/L34.npy",
+   "size": 522547328,
+   "sha256": "567e9efa5789f16a9d6a0624f3434002b8fca8aa9921c1fc49ba20d99c4f800a"
+  },
+  {
+   "path": "quant-iq3s/residents/L34.ids.npy",
+   "size": 884,
+   "sha256": "8b470feb49d1e94e2142e566422c144cb263b2d8828586832df4847c1a6341c5"
+  },
+  {
+   "path": "quant-iq3s/residents/L35.npy",
+   "size": 500428928,
+   "sha256": "4f60132728b2cccb17245fde63118fb30554de1ec022e3778cd5f7a84446ade9"
+  },
+  {
+   "path": "quant-iq3s/residents/L35.ids.npy",
+   "size": 852,
+   "sha256": "5f39df4959a9db33605d2725710e6c471d235d29ad7983ab792b6bbac37d4722"
+  },
+  {
+   "path": "quant-iq3s/residents/L36.npy",
+   "size": 561254528,
+   "sha256": "3b606df902d83fd683009d18b5e5c4b0ff639fc684e05378af134563e735ece6"
+  },
+  {
+   "path": "quant-iq3s/residents/L36.ids.npy",
+   "size": 940,
+   "sha256": "9c749871bcd7d87b4b340a33bdeb9935241cab68016bf77f4dcb736bf9efaca0"
+  },
+  {
+   "path": "quant-iq3s/residents/L37.npy",
+   "size": 505958528,
+   "sha256": "162a6fb298f5db5e604b869d0f4ccdf3ec88a6c81f8500d36cb39af8cfba7fb2"
+  },
+  {
+   "path": "quant-iq3s/residents/L37.ids.npy",
+   "size": 860,
+   "sha256": "055c3cd44f81b759a9937e87ab297c0e772f8dcc992d6297555fbd57eecb05d0"
+  },
+  {
+   "path": "quant-iq3s/residents/L38.npy",
+   "size": 588902528,
+   "sha256": "00ab415901a02cbdef84804d9418d95560582efbd5f4747c61a03fa1ab7e24e3"
+  },
+  {
+   "path": "quant-iq3s/residents/L38.ids.npy",
+   "size": 980,
+   "sha256": "d7d9cc87f1c8f35004e9ab8211352fc19a1685576b1f09f1e58d476583a5baf8"
+  },
+  {
+   "path": "quant-iq3s/residents/L39.npy",
+   "size": 500428928,
+   "sha256": "744c7f03cec01d25189730cb7e4732c42019824062a370248b4822404557a650"
+  },
+  {
+   "path": "quant-iq3s/residents/L39.ids.npy",
+   "size": 852,
+   "sha256": "5824923f9c752ffce3c9ba548911ec58cf990a467f657911982d1badb697fd90"
+  },
+  {
+   "path": "quant-iq3s/residents/L40.npy",
+   "size": 483840128,
+   "sha256": "66a5cfebcd4b8467021acceb563a8c4598c4dfad46260030fa33429c8c7f2fc1"
+  },
+  {
+   "path": "quant-iq3s/residents/L40.ids.npy",
+   "size": 828,
+   "sha256": "204cf7ff9c7b890e48a429abde1c9dff5121fd4a8360ae9712001b8be898e5ee"
+  },
+  {
+   "path": "quant-iq3s/residents/L41.npy",
+   "size": 505958528,
+   "sha256": "64c3869eba1f6b94c854e86f34ee048b476e63ab8d57b55412cc6f3470dbedf5"
+  },
+  {
+   "path": "quant-iq3s/residents/L41.ids.npy",
+   "size": 860,
+   "sha256": "5beca99f90095cd581da3056b503ab1552caa35854cd722ef5b2607a03b37856"
+  },
+  {
+   "path": "quant-iq3s/residents/L42.npy",
+   "size": 536371328,
+   "sha256": "c43374ae3dcd74965df4db00e50e91e87d28cf92776a3674561b125b27031388"
+  },
+  {
+   "path": "quant-iq3s/residents/L42.ids.npy",
+   "size": 904,
+   "sha256": "81bce408823a02b889e2a39d0402a0e3bd693fd6308a065b8d6c737cd7eeb661"
+  },
+  {
+   "path": "quant-iq3s/residents/L43.npy",
+   "size": 483840128,
+   "sha256": "c4f5623e006646defc347eb71df10e4c7849efb3e03988277033af1955d4f1e1"
+  },
+  {
+   "path": "quant-iq3s/residents/L43.ids.npy",
+   "size": 828,
+   "sha256": "cdb82df774a7f350b8d415b171d793277b4f9e90c7ad7454170321f6b6bd5cb5"
+  },
+  {
+   "path": "quant-iq3s/residents/L44.npy",
+   "size": 481075328,
+   "sha256": "6d544357184c27ede37419eaccb518c74cde314f9d8ca8361783e728c4a6c0e1"
+  },
+  {
+   "path": "quant-iq3s/residents/L44.ids.npy",
+   "size": 824,
+   "sha256": "42b2b55b9c0df61308a7e383e21a13ee1d2d579ec06b17d756a341d3c88a2c8d"
+  },
+  {
+   "path": "quant-iq3s/residents/L45.npy",
+   "size": 481075328,
+   "sha256": "1111ec11df33cf8059069b1a020fe19e556a348becb333d484772a5ef9326c79"
+  },
+  {
+   "path": "quant-iq3s/residents/L45.ids.npy",
+   "size": 824,
+   "sha256": "f1cc2fb3e90696b05265672be44161eac0e3c0f8f2c1d7651b7e53e5fc1000e3"
+  },
+  {
+   "path": "quant-iq3s/residents/L46.npy",
+   "size": 445132928,
+   "sha256": "c00f62630c102e5daf5eb36a8b6f2bfd5dfba3d32fe6592a95e34c2769c088d9"
+  },
+  {
+   "path": "quant-iq3s/residents/L46.ids.npy",
+   "size": 772,
+   "sha256": "150d24fd2786b7027555a1bc7cd4259ee34aaef4a217b8b618875e85cc5aa296"
+  },
+  {
+   "path": "quant-iq3s/residents/L47.npy",
+   "size": 428544128,
+   "sha256": "ce2884ca82ba338fe106cf93122af7c80ab246915dcad16eae068e554b914fe2"
+  },
+  {
+   "path": "quant-iq3s/residents/L47.ids.npy",
+   "size": 748,
+   "sha256": "9de0a46c435b2de09a51716295931f5aff320746fa5faf8b85f20adf31a937ea"
   }
  ]
 }

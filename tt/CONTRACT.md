@@ -14,9 +14,10 @@ packs/<coder-iq1_m | iq3_s>, and for iq3s quant-iq3s/, cache/tt-iq3s, golden-iq3
 quant/, cache/tt, golden/, eval/; cache/dequant is per GGUF stem; kcache and mtp/ are shared: the drafter is the full
 model's MTP layer for both).  Shard 2 (the PLE table, sha256 316b46f3...) is the same file for every quant: the dev
 host hardlinks the Coder's.  The tokenizer and chat template are byte-identical, so eval-iq3s reuses the Coder's
-evalset.jsonl / gsm8k.jsonl.  iq3s has no GPTQ store (no CUDA GPU on the host): its device plans come from
-`fnx.quant.datafree` (search-BFP4 rows of the GGUF values + profile-ranked residency, `search4-tiered-<budget>`), and
-its quality reference is the cpu configuration's own teacher forcing (`fnx.eval.run --write-ref`).
+evalset.jsonl / gsm8k.jsonl.  iq3s's default (cpu MoE) card residents are GPTQ-BFP4 (`fnx.quant.residents`, 2026-10-13,
+below); its all-device plans (FNX_MOE=device) come from `fnx.quant.datafree` (search-BFP4 rows of the GGUF values +
+profile-ranked residency, `search4-tiered-<budget>`), and its quality reference is the cpu configuration's own
+teacher forcing (`fnx.eval.run --write-ref`).
 
 Specification: `/home/lotto/.omp/agent/sessions/-tmp/2026-10-02T13-24-24-920Z_01a0fcc9-96d8-7578-b42f-1cffdb5ac6d2/local/flashnext-spec.md`
 (`local://flashnext-spec.md`; Part 1 loading, 2 embedding+PLE, 3 HC+head, 4 GDN, 5 QSA, 6 MoE, 7 sampler+MTP,
@@ -165,7 +166,7 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
 - Data-free BFP4 (`fnx.quant.datafree`, no calibration) gated on the Coder 2026-10-10 (run `device-search4`, plan
   search4-tiered-2.4e+10 in a scratch FNX_QUANT_DIR, since deleted): all dPPL +0.38% (GPTQ +0.09%), chat +2.04%
   (+0.37%), code -0.27% (-0.18%), top-1 .927 (.937), KL .0475 (.038; limit .057), GSM8K-50 44/50 (Strata 44/50).  The
-  Coder keeps GPTQ; data-free is the iq3s variant's device store (no CUDA host for GPTQ).
+  Coder keeps GPTQ; data-free is the iq3s variant's FNX_MOE=device store (its default cpu MoE residents: GPTQ).
 - Default expert plan `bfp4-tiered-2.4e+10` (fnx/tt/model.py DEFAULT_PLAN): 8680 resident experts (24.0e9 B, 85.9% of
   routings). Size any new default with `tools/devrun.sh dram tools/dram_budget.py [--plan P]` (serving-exact build: 32K
   ctx, MTP drafter, warm-up, traces; prints the budget that keeps 1.5 GB free). Trace region 480 MiB (FNX_TRACE_MB;
@@ -207,7 +208,7 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   book -1.02%), top-1 .925, KL .0437, GSM8K-50 46 (bfp8-profile .0067 / 46; exact 47): KL within .057, perplexity
   moves beyond 2% - downward, against the exact experts.  bfp8-4671 by counts gated 2026-10-11 (run cpu-b8-counts):
   all +0.05% (chat +1.73%, code -0.18%, instruct -3.01%, book +0.03%), top-1 .974, KL .0066, GSM8K-50 46.  Default:
-  bfp4-8823 (fnx.tt.moe.DEFAULT_RESIDENT; the user chose speed over the perplexity shift, 2026-10-11); test_serve PASS
+  bfp4-8823 (fnx.quant.datafree.DEFAULT_RESIDENT; the user chose speed over the perplexity shift, 2026-10-11); test_serve PASS
   17/17 with it; served general chat warm 23.5-30 tok/s (was 19.5-21.7 with bfp8-4671 by profile).
 - Traced decode drafts full chains (fnx.serve_engine: draft min_p 0 when FNX_TRACE is on; --spec-min-p applies to
   eager decode only).  Strata's setup writes --spec-min-p 0.5, which ended chains early, so most verify windows had 2-3
@@ -228,6 +229,18 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   prefill 134 -> 176 tok/s, TTFT 15.6 -> 11.9 s, decode 20.3 tok/s.  What is left is the MoE stage (77% of a prompt
   read): 38% of the routed slots run on the CPU (IQ3_S expert bytes at the RAM's ~40-46 GB/s, re-read per chunk) and
   48 card <-> host round trips per chunk.
+- IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
+  from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
+  input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
+  exponent (block_step: min-MSE among E_max - c of the error-updated values) at its first column and quantizes its
+  16 columns on that grid in turn, whole blocks in descending summed-H-diagonal order.  Calibration as the Coder's
+  store (same seqs.json, unweighted Hessians, 8192-row prior, 1% damping), Hessians of the residents only (peak 20 GB
+  GPU: the layer's 512 float experts leave before GPTQ).  Store FNX_QUANT_DIR/residents (23 GB, published,
+  tt/artifacts.json; setup fetches it for IQ3_S); resident format `gptq4` (fnx.tt.moe.RESIDENT_FORMATS: bfloat4_b
+  holding the store's values, cache tag -g4<sha1>; the layer-0 cache read back bitwise the store).  Held-out expert
+  output error vs min-MSE: -30..-55% per layer.  Gate (run cpu-s4-g4): all dPPL -0.66% (chat -1.32%, code -0.02%,
+  instruct -1.37%, book -0.59%), top-1 .942, KL .0279, GSM8K-50 45 (min-MSE: -2.21%, .925, .0437, 45).  Default
+  since; same format and bytes on the card, so the same speed.
 - QSA sparse selection: the per-row assembly is native (cpu_experts/fnx_qsa.cpp, fnx.cpu_experts.assemble_selection;
   bounds and the exact rescoring stay numpy / fnx.ref.qsa.block_scores): test_qsa sparse 12410/12410 rows identical
   to the reference, test_trace sparse bitwise.  The traced QSA readback copies into a preallocated host tensor.

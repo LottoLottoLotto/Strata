@@ -17,9 +17,10 @@ download (or --gguf-dir), the pack, the tokenizer, the MTP draft layer - is setu
     card's 32 GB and pins a ~12 GB host pool for the rest, IQ3_S runs the experts the card does not hold on the CPU
     from the GGUF (warm in the page cache), so setup's rule does not apply (TT_MODELS' own minimum instead);
   - after the pack and the MTP draft layer: the P150's own files (tt/artifacts.json: for the Coder the GPTQ-BFP4
-    expert store of the default plan and the drafter's BFP4 experts, for IQ3_S the drafter's only) are fetched into
-    FNX_DATA by tt/tools/tt_artifacts.py; for IQ3_S the card's 4-bit expert caches are then built on the CPU (no card,
-    `fnx.tt.moe --prepare default`), so the first start does not spend ~15 minutes on them;
+    expert store of the default plan and the drafter's BFP4 experts, for IQ3_S the drafter's and the GPTQ-BFP4 values
+    of its 8,823 card-resident experts) are fetched into FNX_DATA by tt/tools/tt_artifacts.py; for IQ3_S the card's
+    expert caches are then built from those on the CPU (no card, `fnx.tt.moe --prepare default`), so the first
+    start does not spend ~10 minutes on them;
   - the config: the engine is tt/serve/tt-engine.sh (the engine in Docker, holding the shared device lock), backend
     "tt"; the run script starts tt/serve/server_tt.py (serve/server.py plus the P150's Monitor readings and start
     narration).
@@ -69,7 +70,8 @@ TT_MODELS = {
               "menu": "its experts on the card and in a ~12 GB host pool",
               "fit": "the Coder: fits the P150 (most of its experts in the card's 32 GB, the rest in a ~12 GB pinned "
                      "host pool)"},
-    "IQ3_S": {"family": "qwen", "variant": "iq3s", "ram_gb": 64, "artifacts": ("mtp/*",), "cache_gb": 30,
+    "IQ3_S": {"family": "qwen", "variant": "iq3s", "ram_gb": 64, "artifacts": ("mtp/*", "quant-iq3s/residents/*"),
+              "cache_gb": 30,
               "menu": "8,823 of its experts on the card, the rest on the CPU (64 GB of RAM)",
               "fit": "the full model: 8,823 experts on the card, the rest on the CPU from the GGUF (64 GB of RAM keep "
                      "it warm)"},
@@ -479,8 +481,8 @@ def prepare(fnx_data: Path, variant: str = "coder", gguf: str | None = None) -> 
     pats = VARIANT_ARTIFACTS[variant]
     size = sum(int(f.get("size", 0)) for f in manifest_files()
                if pats is None or any(fnmatch.fnmatch(f["path"], p) for p in pats)) / 1e9
-    S.say(f"  The P150's {'expert' if pats is None else 'draft-layer'} files (~{size:.0f} GB the first time) into "
-          f"{fnx_data}:")
+    S.say(f"  The P150's {'expert' if pats is None else 'draft-layer and card-expert'} files (~{size:.0f} GB the "
+          f"first time) into {fnx_data}:")
     Path(fnx_data).mkdir(parents=True, exist_ok=True)
     S.run([sys.executable, str(ARTIFACTS_TOOL), "fetch", "--data", str(fnx_data),
            *(["--only", ",".join(pats)] if pats else [])])
@@ -492,10 +494,10 @@ def prepare(fnx_data: Path, variant: str = "coder", gguf: str | None = None) -> 
 
 
 def prepare_caches(fnx_data: Path, variant: str, gguf: str) -> None:
-    """The card's resident-expert caches of the variant's default placement (fnx.tt.moe --prepare default) from the
-    model's shard 1 `gguf`, built in the engine image on the CPU with a mock card (no device, no lock), PREP_WORKERS
-    layer ranges at a time.  Layers already cached take a second."""
-    S.say("  Building the card's 4-bit expert caches from the model file (on the CPU, ~15 minutes the first time) ...")
+    """The card's resident-expert caches of the variant's default placement (fnx.tt.moe --prepare default; IQ3_S:
+    from its fetched GPTQ store, fnx.quant.residents), built in the engine image on the CPU with a mock card (no
+    device, no lock), PREP_WORKERS layer ranges at a time.  Layers already cached take a second."""
+    S.say("  Building the card's 4-bit expert caches (on the CPU, ~10 minutes the first time) ...")
     env = {**os.environ, "FNX_DATA": str(fnx_data), "FNX_MODEL": variant, "NODEV": "1",
            "TT_METAL_MOCK_CLUSTER_DESC_PATH": MOCK_CLUSTER, "FNX_IMAGE": engine_image()}
     env.pop("FNX_EXPERT_PLACEMENT", None)

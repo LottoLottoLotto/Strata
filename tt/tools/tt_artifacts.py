@@ -10,6 +10,8 @@ relative to FNX_DATA:
                                    only the formats the plan uses (the default plan is all-BFP4: no b2 rows)
   mtp/experts-bfp4-search.u8       the MTP drafter's 512 routed experts in BFP4 (fnx.ref.mtp.MtpWeights.bfp4_rows)
   mtp/expert-profile.npy           the drafter's routing counts (fnx.tt.mtp.host_experts; made by a device run)
+  quant-iq3s/residents/L{LL}.npy   IQ3_S: GPTQ-BFP4 values of its 8,823 card-resident experts (fnx.quant.residents),
+                                   + L{LL}.ids.npy and manifest.json
 
 Not in the set: caches rebuilt by the first engine start (cache/dequant ~16 GB, cache/tt ~14 GB, kcache ~9 GB on the
 dev machine), the opt-in plans (h2 BFP2 rows, the gptq4 LM head), the calibration corpus.
@@ -56,6 +58,7 @@ BLOCK = 8 << 20
 ATTEMPTS = 30
 POOL_TAG = {4: "b4", 2: "b2"}
 COMMIT_BYTES = 4 << 30                                   # publish: data per commit (a resumable unit)
+RESIDENTS = "quant-iq3s/residents"                       # IQ3_S's GPTQ card-resident experts (fnx.quant.residents)
 # the published GPTQ run (quant/run-quantize.json of the dev store, 2026-10-06): unweighted Hessians, prior to 8192
 # rows, bfp4 rows of every expert; regenerate's defaults
 QUANTIZE_ARGS = ["--weighted", "0", "--n-min", "8192", "--beta", "0", "--transform", "none", "--pool4", "1.0",
@@ -219,7 +222,8 @@ def artifact_paths(data: Path, plan: str) -> list[str]:
     for L in layers:
         for b in sorted(bits, reverse=True):
             rels += [f"quant/store/pool/L{L:02d}.{POOL_TAG[b]}.npy", f"quant/store/pool/L{L:02d}.{POOL_TAG[b]}idx.npy"]
-    return rels + ["mtp/experts-bfp4-search.u8", "mtp/expert-profile.npy"]
+    res = [f"{RESIDENTS}/manifest.json"] + [f"{RESIDENTS}/L{L:02d}.{k}" for L in range(48) for k in ("npy", "ids.npy")]
+    return rels + ["mtp/experts-bfp4-search.u8", "mtp/expert-profile.npy"] + res
 
 
 def hash_all(data: Path, files: list, jobs: int, what: str) -> dict:
@@ -514,6 +518,8 @@ Paths are relative to the backend's data folder (`FNX_DATA`).
 | `quant/store/plans/{man['plan']}/` | the plan: per layer `fmt` (all 4 = BFP4), `row` (pool row of each matrix), `res` (device-resident or host), `plan.json` |
 | `mtp/experts-bfp4-search.u8` | the MTP draft layer's 512 routed experts: uint8 [512, 3, 921600] BFP4 rows |
 | `mtp/expert-profile.npy` | int64 [512]: how often the drafter routes to each expert (the 254 hottest stay in device DRAM) |
+| `quant-iq3s/residents/L{{00..47}}.npy` | **full model (IQ3_S)**: GPTQ-BFP4 values of the 8,823 routed experts the card holds (155-221 per layer): uint8 [3 n, 921600], row 3 i + m = matrix m (gate, up, down) of the layer's i-th resident expert, W [out, in] with one shared exponent per 16 input columns (the layout the card keeps them in) |
+| `quant-iq3s/residents/L{{00..47}}.ids.npy`, `manifest.json` | int32 [n]: those experts (ascending); per-layer SHA-1 + settings |
 
 ## How it was made
 
@@ -534,6 +540,14 @@ Paths are relative to the backend's data folder (`FNX_DATA`).
 - **MTP drafter**: the MTP layer of Qwen/Qwen3.8-Flash-Next as Strata packs it (Q2_0 experts), converted to BFP4 with
   a per-block min-MSE exponent (`fnx.quant.methods.search`); the routing profile comes from draft rounds on
   calibration text on the P150 (`fnx/tests/test_mtp.py profile`).
+- **Full model (IQ3_S) card residents** (`fnx.quant.residents`): the same calibration set through a float32 forward
+  of [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
+  IQ3_S (revision `ed59f92082b1e93c0e96d60a8b11aab089b52f09`, all 512 experts), Hessians of the 8,823 most-routed
+  experts only (the ones the card holds; the rest run on the CPU from the GGUF as they are), the same prior and
+  damping; GPTQ with the block exponent fixed at each 16-column block's first column and whole blocks in act-order
+  (`fnx.quant.methods.gptq_rows`); 30 minutes on one RTX 3090.  Quality gate on the P150 (cpu MoE with these
+  residents): KL .0279 (.0437 with min-MSE BFP4 of the GGUF values), top-1 .942 (.925), perplexity -0.66%
+  (-2.21%), GSM8K-50 45/50 (45/50); same speed.
 
 `tt/tools/tt_artifacts.py regenerate` in Strata reruns these steps (CUDA GPU with >= 16 GB).
 
@@ -658,15 +672,20 @@ def cmd_regenerate(a) -> int:
       alloc     fnx.quant.alloc --tiered <DEFAULT_PLAN's budget> --write: the plan (all 48 layers needed; seconds)
       mtp       fnx.ref.mtp.MtpWeights(--mtp RT).bfp4_rows(): DATA/mtp/experts-bfp4-search.u8 from mtp-q2_0.gguf
                 beside RT (setup's MTP runtime folder, the engine's --mtp); CPU only, 1.5 min with 8 threads
+      residents IQ3_S: fnx.quant.residents (FNX_MODEL=iq3s, --gguf-iq3s) over the same calibration sequences (copied
+                to DATA/quant-iq3s/calib): GPTQ-BFP4 of the 8823 card-resident experts -> DATA/quant-iq3s/residents
+                (23 GB); 30 min on an RTX 3090 (peak 20 GB of GPU memory, ~45 GB of host RAM); not a default step
     mtp/expert-profile.npy is a P150 measurement (fnx/tests/test_mtp.py profile through tools/devrun.sh); regenerate
     does not rebuild it.  On the dev machine (RTX 3090, torch of the venv) layer 0's pool files and the MTP file came
     out bitwise equal to the published ones (2026-10-08); another GPU/driver/torch may round GPTQ differently: the
     summary line compares the result with the manifest."""
     data = a.data.absolute()
     steps = [s.strip() for s in a.steps.split(",") if s.strip()]
-    unknown = set(steps) - {"calib", "quantize", "alloc", "mtp"}
+    unknown = set(steps) - {"calib", "quantize", "alloc", "mtp", "residents"}
     if unknown:
-        fail(f"unknown steps {sorted(unknown)} (calib, quantize, alloc, mtp)")
+        fail(f"unknown steps {sorted(unknown)} (calib, quantize, alloc, mtp, residents)")
+    if "residents" in steps and not (a.gguf_iq3s and Path(a.gguf_iq3s).is_file()):
+        fail("the residents step needs --gguf-iq3s: shard 1 of the IQ3_S GGUF (shard 2 beside it)")
     if "quantize" in steps and not a.gguf:
         fail("the quantize step needs --gguf: shard 1 of the Coder IQ1_M GGUF (shard 2 beside it)")
     if "mtp" in steps and not a.mtp:
@@ -733,6 +752,18 @@ def cmd_regenerate(a) -> int:
             run(py, "-c", "import sys; from fnx.ref.mtp import MtpWeights; MtpWeights(sys.argv[1]).bfp4_rows()", rt)
             if not out.is_file():
                 fail(f"MtpWeights.bfp4_rows did not write {out}")
+    if "residents" in steps:
+        seqs, dst = quant / "calib" / "seqs.json", data / "quant-iq3s" / "calib" / "seqs.json"
+        if not dst.is_file():
+            if not seqs.is_file():
+                fail(f"the residents step needs the calibration sequences {seqs} (the calib step)")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(seqs, dst)
+        run_env = {**env, "FNX_MODEL": "iq3s", "FNX_GGUF": str(Path(a.gguf_iq3s).absolute())}
+        say("regenerate: FNX_MODEL=iq3s fnx.quant.residents")
+        rc = subprocess.call([py, "-m", "fnx.quant.residents"], env=run_env, cwd=str(TT))
+        if rc:
+            fail(f"fnx.quant.residents failed (rc {rc})", rc)
     man = load_manifest(a.manifest) if a.manifest.is_file() else None
     if man:
         files = [f for f in man["files"] if local(data, f["path"]).is_file()]
@@ -765,10 +796,12 @@ def main(argv=None) -> int:
     p.add_argument("--remote", action="store_true")
     p = common(sub.add_parser("regenerate", help="rebuild the artifacts from the GGUF (CUDA GPU)"), True)
     p.add_argument("--gguf", help="shard 1 of the Coder IQ1_M GGUF, shard 2 beside it (the quantize step)")
+    p.add_argument("--gguf-iq3s", help="shard 1 of the IQ3_S GGUF, shard 2 beside it (the residents step)")
     p.add_argument("--mtp", help="setup's MTP runtime folder rt/ with mtp-q2_0.gguf beside it (the mtp step)")
     p.add_argument("--calib", help="calibration sequences (fnx.quant.calib_data's seqs.json) to use instead of "
                                    "building them (calib_data reads the dev machine's corpora)")
-    p.add_argument("--steps", default="calib,quantize,alloc,mtp", help="comma list of calib, quantize, alloc, mtp")
+    p.add_argument("--steps", default="calib,quantize,alloc,mtp",
+                   help="comma list of calib, quantize, alloc, mtp, residents")
     p.add_argument("--layers", default="", help="quantize only these layers (comma list; a smoke test: no plan)")
     p.add_argument("--pool2", type=float, default=0.0,
                    help="also store BFP2 rows for this coldest fraction (0.4 = the dev store, for the opt-in h2 plans)")

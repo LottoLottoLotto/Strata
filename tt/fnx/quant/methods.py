@@ -130,6 +130,77 @@ def gptq(W: torch.Tensor, H: torch.Tensor, fmt: str, damp: float = 0.01, blocksi
     return Q
 
 
+def block_step(x: torch.Tensor, fmt: str, clips=None) -> torch.Tensor:
+    """x [..., n] (blocks of 16 along the last dim) -> per block the grid step of its min-MSE exponent among E_max - c
+    (c in clips, round-to-nearest on each grid), [..., n/16]; 0 for an all-zero block."""
+    clips = CLIPS[fmt] if clips is None else clips
+    qmax = float((1 << bfp.MANT_BITS[fmt]) - 1)
+    xb = x.float().reshape(*x.shape[:-1], -1, bfp.BLOCK)
+    Emax = bfp.shared_exponent(x)
+    best_step, best_err = None, None
+    for c in clips:
+        step = bfp.step_for_exponent((Emax - c).clamp(1, 254), fmt)
+        err = (torch.round(xb / step.unsqueeze(-1)).clamp_(-qmax, qmax) * step.unsqueeze(-1) - xb).pow(2).sum(-1)
+        if best_step is None:
+            best_step, best_err = step, err
+        else:
+            m = err < best_err
+            best_step, best_err = torch.where(m, step, best_step), torch.where(m, err, best_err)
+    return torch.where(Emax > 0, best_step, torch.zeros_like(best_step))
+
+
+def gptq_rows(W: torch.Tensor, H: torch.Tensor, fmt: str, damp: float = 0.01, blocksize: int = 128,
+              group_order: bool = True, clips=None) -> torch.Tensor:
+    """Batched GPTQ for W [B, out, in] held by ttnn AS IS (the cpu MoE's resident experts, fnx.tt.moe.DeviceExperts):
+    a BFP block is 16 consecutive INPUT columns of one output row, so a block's exponent is fixed when GPTQ reaches
+    its first column (block_step of the error-updated values) and its 16 columns are quantized on that grid in turn.
+    group_order: the blocks in descending order of their summed H diagonal (act-order over whole blocks).  H [B, in,
+    in].  Returns snapped fp32 [B, out, in] (tt-metal keeps it exactly: bfp.is_snapped)."""
+    W = W.float().clone()
+    H = H.float().clone()
+    B, R, C = W.shape
+    K = bfp.BLOCK
+    assert C % K == 0 and blocksize % K == 0
+    qmax = float((1 << bfp.MANT_BITS[fmt]) - 1)
+    diag = H.diagonal(dim1=-2, dim2=-1)
+    dead = diag == 0
+    if bool(dead.any()):
+        diag.masked_fill_(dead, 1.0)
+        W.masked_fill_(dead[:, None, :], 0.0)
+    perm = None
+    if group_order:
+        g = torch.argsort(H.diagonal(dim1=-2, dim2=-1).reshape(B, C // K, K).sum(-1), dim=-1, descending=True)
+        perm = (g[:, :, None] * K + torch.arange(K, device=W.device)).reshape(B, C)
+        W = torch.gather(W, 2, perm[:, None, :].expand(B, R, C))
+        H = torch.gather(H, 1, perm[:, :, None].expand(B, C, C))
+        H = torch.gather(H, 2, perm[:, None, :].expand(B, C, C))
+    box = [H]
+    del H, diag
+    U, _ = _cholesky_inv_upper(box, damp)
+    Q = torch.empty_like(W)
+    step = safe = None
+    for i1 in range(0, C, blocksize):
+        i2 = min(i1 + blocksize, C)
+        W1 = W[:, :, i1:i2].clone()
+        Err1 = torch.empty_like(W1)
+        U1 = U[:, i1:i2, i1:i2]
+        for j in range(i2 - i1):
+            if j % K == 0:
+                step = block_step(W1[:, :, j:j + K], fmt, clips)[..., 0]           # [B, out]
+                safe = torch.where(step > 0, step, torch.ones_like(step))
+            w = W1[:, :, j]
+            q = torch.where(step > 0, torch.round(w / safe).clamp_(-qmax, qmax) * safe, torch.zeros_like(w))
+            Q[:, :, i1 + j] = q
+            e = (w - q) / U1[:, j, j][:, None]
+            W1[:, :, j:] -= e[:, :, None] * U1[:, j, j:][:, None, :]
+            Err1[:, :, j] = e
+        if i2 < C:
+            W[:, :, i2:] -= torch.bmm(Err1, U[:, i1:i2, i2:])
+    if perm is not None:
+        Q = torch.gather(Q, 2, torch.argsort(perm, dim=-1)[:, None, :].expand(B, R, C))
+    return _flush_denormals(Q)
+
+
 def rel_err_h(W: torch.Tensor, Q: torch.Tensor, H: torch.Tensor) -> torch.Tensor:
     """Batched tr(dW H dW^T) / tr(W H W^T): relative output MSE under the second moment H. W, Q [B, out, in]."""
     dW = (W - Q).float()
