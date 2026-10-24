@@ -339,17 +339,18 @@ class TtModel:
         _free(head_in)
         return (logits, ids, R) if keep_R else (logits, ids)
 
-    def forward_prompt(self, tokens, groups: list[int], block: int, keep_R: bool = False):
-        """Prompt rows without the head, as consecutive row groups (`groups`: rows per group, each a multiple of
-        `block`) whose CPU experts overlap the device.  The device runs every layer in `block`-row calls (forward()'s
-        ops and shapes); the MoE of a group is one CPU expert call over all its blocks' rows (Moe.start).
+    def forward_prompt(self, tokens, groups: list[list[int]], keep_R: bool = False):
+        """Prompt rows without the head, as consecutive row groups whose CPU experts overlap the device.  `groups`:
+        each group's blocks as row counts, in token order; the device runs every layer in one call per block
+        (forward()'s ops and shapes for that row count); the MoE of a group is one CPU expert call over all its
+        blocks' rows (Moe.start).
 
         Per layer, group g's blocks are mixed and routed while group g-1's CPU experts still run; group g-1's MoE then
         completes, g's CPU experts start, and the device moves on to group g+1 (the last group's CPU experts overlap
         the first group's next layer).  Within a group the host work hides behind the device's: every block's MoE
         read-back is queued and routed after the group's device work is dispatched (Moe.begin / route), and a QSA
         layer starts block k+1 before block k's host selection (Qsa.start / index / select / finish).  The device state
-        and arithmetic are those of consecutive forward(head=False) calls of `block` rows; only the CPU experts' token
+        and arithmetic are those of consecutive forward(head=False) calls of the blocks; only the CPU experts' token
         grouping is the group's (Moe.start).  The CPU MoE only (the device MoE has no host phase to hide).  -> None,
         or with keep_R each block's final residual, in token order (release each through free_R())."""
         if self._win is not None:
@@ -357,19 +358,19 @@ class TtModel:
         if self.moe != "cpu":
             raise RuntimeError("TtModel.forward_prompt: the CPU MoE only")
         tokens = np.asarray(tokens, dtype=np.int64).reshape(-1)
-        if sum(groups) != len(tokens) or any(n <= 0 or n % block for n in groups):
-            raise ValueError(f"groups {groups} of {block}-row blocks do not cover {len(tokens)} rows")
+        if sum(map(sum, groups)) != len(tokens) or not all(g and min(g) > 0 for g in groups):
+            raise ValueError(f"blocks {groups} do not cover {len(tokens)} rows")
         if self._trace is not None:
             self._trace.sync()                         # the host indexer rows a traced step deferred
         gs, a = [], 0
-        for n in groups:
+        for sizes in groups:
             g = []
-            for b in range(a, a + n, block):
-                tok = tokens[b:b + block]
+            for n in sizes:
+                tok = tokens[a:a + n]
                 e_ple = self.ple.upload_rows(tok)      # the PLE n-gram history: blocks in token order
-                g.append(dict(pos=np.arange(self.pos + b, self.pos + b + block), e_ple=e_ple, R=self.embed(tok)))
+                g.append(dict(pos=np.arange(self.pos + a, self.pos + a + n), e_ple=e_ple, R=self.embed(tok)))
+                a += n
             gs.append(g)
-            a += n
         pending = None                                 # (blocks, their layer's Moe, the begun calls)
 
         def finish():

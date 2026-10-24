@@ -199,6 +199,71 @@ void gu_rows(const uint8_t* blob, size_t gu_row, size_t up_off, int n, const voi
     }
 }
 
+// Wide groups (more than MAXT tokens of one expert, the TT port's prompt reads): a block's 4 chunks are decoded ONCE
+// for every token (row_dot decodes them once per call of at most 8 tokens), then the tokens run 8 at a time against
+// the decoded values, their float accumulators in memory.  Each token's operations and their order are row_dot's,
+// so every result is bitwise row_dot<TY, NT>'s, for any NT.
+template <int N>
+inline void apply_block(const __m512i* g, const __mmask64* m, const __m512i* sc, const block_q8_K* const* y, int i,
+                        float dx, __m512* accf) {
+    const __m512i zero = _mm512_setzero_si512();
+    __m512i acci[N];
+    for (int t = 0; t < N; ++t) acci[t] = _mm512_setzero_si512();
+    for (int j = 0; j < 4; ++j)
+        for (int t = 0; t < N; ++t) {
+            const __m512i yv = _mm512_loadu_si512((const void*) (y[t][i].qs + 64 * j));
+            const __m512i ys = _mm512_mask_sub_epi8(yv, m[j], zero, yv);
+            acci[t] = _mm512_add_epi32(acci[t], _mm512_madd_epi16(_mm512_maddubs_epi16(g[j], ys), sc[j]));
+        }
+    for (int t = 0; t < N; ++t)
+        accf[t] = _mm512_fmadd_ps(_mm512_set1_ps(dx * y[t][i].d), _mm512_cvtepi32_ps(acci[t]), accf[t]);
+}
+
+template <int TY>
+void row_dot_wide(const uint8_t* row, int nblocks, const block_q8_K* const* y, int nt, float* res) {
+    __m512 accf[kIq512WideMax];
+    for (int t = 0; t < nt; ++t) accf[t] = _mm512_setzero_ps();
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* blk = row + (size_t) i * Fmt<TY>::bytes;
+        if (prefetch_ahead > 0) {
+            const uint8_t* ahead = blk + (size_t) prefetch_ahead;
+            _mm_prefetch((const char*) ahead, _MM_HINT_T0);
+            _mm_prefetch((const char*) ahead + 64, _MM_HINT_T0);
+        }
+        __m512i g[4], sc[4];
+        __mmask64 m[4];
+        for (int j = 0; j < 4; ++j) Fmt<TY>::decode(blk, j, g[j], m[j], sc[j]);
+        const float dx = h2f(u16(blk)) * Fmt<TY>::K;
+        int t0 = 0;
+        for (; t0 + 8 <= nt; t0 += 8) apply_block<8>(g, m, sc, y + t0, i, dx, accf + t0);
+        switch (nt - t0) {
+            case 1: apply_block<1>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 2: apply_block<2>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 3: apply_block<3>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 4: apply_block<4>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 5: apply_block<5>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 6: apply_block<6>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 7: apply_block<7>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            default: break;
+        }
+    }
+    for (int t = 0; t < nt; ++t) res[t] = _mm512_reduce_add_ps(accf[t]);
+}
+
+template <int TY>
+void gu_rows_wide(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                  float* const* ff, int r0, int r1) {
+    const block_q8_K* y[kIq512WideMax];
+    for (int t = 0; t < nt; ++t) y[t] = (const block_q8_K*) act[t];
+    const int nb = n / QK_K;
+    float g[kIq512WideMax], u[kIq512WideMax];
+    for (int r = r0; r < r1; ++r) {
+        row_dot_wide<TY>(blob + (size_t) r * gu_row, nb, y, nt, g);
+        row_dot_wide<TY>(blob + up_off + (size_t) r * gu_row, nb, y, nt, u);
+        for (int t = 0; t < nt; ++t) ff[t][r] = (g[t] / (1.f + std::exp(-g[t]))) * u[t];
+    }
+}
+
 template <int TY, int NT>
 void dot_rows(const uint8_t* w, size_t row_bytes, int n, const void* const* act, float* const* out, int r0, int r1) {
     const block_q8_K* y[NT];
@@ -221,7 +286,8 @@ void gu_rows_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n
         case 5: gu_rows<TY, 5>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 6: gu_rows<TY, 6>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 7: gu_rows<TY, 7>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
-        default: gu_rows<TY, 8>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 8: gu_rows<TY, 8>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        default: gu_rows_wide<TY>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;   // 9..kIq512WideMax
     }
 }
 

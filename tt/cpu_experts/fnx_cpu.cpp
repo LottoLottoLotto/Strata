@@ -12,8 +12,11 @@
 // may lie in either order in the mapping; the flat x86-64 address space makes the wrapped sum the right address).
 //
 // Output rows are UNWEIGHTED (as the engine's CPU pool returns them); the router weights and the shared expert
-// are applied by the caller.  Tokens of one expert run together in groups of at most MAXT (8); with
-// STRATA_IQ_MT_MIN=1 a token's rows do not depend on that grouping (#152).
+// are applied by the caller.  Tokens of one expert run together in groups of at most MAXT (8), or of at most
+// kIq512WideMax (32) where the layer's gate/up runs on the AVX-512 i-quant kernel (native_gu_max_tokens: its wide
+// path decodes each weight block once for all of them; a prompt chunk's expert often has more than 8 tokens); the
+// down rows of a wide group run in balanced pieces of at most MAXT.  With STRATA_IQ_MT_MIN=1 a token's rows do not
+// depend on that grouping (#152).
 //
 // Threads (fnx_init): n_threads - 1 pool workers plus the thread that runs a call (the caller of fnx_moe, or the
 // leader thread of fnx_moe_submit), pinned one per physical core as Strata's ExpertPool pins them (pool.cpp
@@ -27,6 +30,7 @@
 #include "strata/kernels/cpu/expert.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
 #include "strata/kernels/cpu/native_expert.hpp"
+#include "strata/kernels/cpu/iq_avx512.hpp"
 
 #include <immintrin.h>
 #include <pthread.h>
@@ -273,11 +277,12 @@ void parallel(int n, F&& fn) {
                 const_cast<void*>(static_cast<const void*>(&fn)));
 }
 
-// One group: up to MAXT tokens of one expert.
+// One group: up to kIq512WideMax tokens of one expert (MAXT unless the gate/up kernel takes more).
+constexpr int WMAX = k::kIq512WideMax;
 struct Group {
     int expert = 0, nt = 0;
-    int tok[k::MAXT];      // token index
-    int slot[k::MAXT];     // which of the token's k routed slots
+    int tok[WMAX];         // token index
+    int slot[WMAX];        // which of the token's k routed slots
     k::NativeFmt f;        // the layer's format with this expert's offsets
     const uint8_t* blob = nullptr;   // the expert's gate rows
     const uint8_t* down = nullptr;   // the expert's down rows
@@ -327,9 +332,10 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
         parallel(nt, [&](int t) { k::native_quant_act(f, x + (size_t) t * k::H, act + (size_t) t * f.act_bytes); });
     }
 
-    // 2. group the slots by expert (first-seen order), at most MAXT tokens a group; skipped slots are zeroed
+    // 2. group the slots by expert (first-seen order), at most `cap` tokens a group; skipped slots are zeroed
     std::vector<Group>& groups = S.groups;
     std::vector<int>& open = S.open;
+    const int cap = q2_gu ? k::MAXT : k::native_gu_max_tokens(f.gu_type);
     groups.clear();
     for (int t = 0; t < nt; ++t)
         for (int s = 0; s < kk; ++s) {
@@ -344,7 +350,7 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
                 return -1;
             }
             int gi = open[(size_t) e];
-            if (gi < 0 || groups[(size_t) gi].nt == k::MAXT) {
+            if (gi < 0 || groups[(size_t) gi].nt == cap) {
                 Group g;
                 g.expert = e;
                 g.f = f;
@@ -367,14 +373,14 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
     if (ng == 0) return 0;
 
     // 3. gate/up rows, split by row ranges across all groups (about three tasks per thread, as the pool does)
-    float* ff = grow(S.ff, (size_t) ng * k::MAXT * k::FF);
-    auto ffp = [&](int gi, int j) { return ff + ((size_t) gi * k::MAXT + j) * k::FF; };
+    float* ff = grow(S.ff, (size_t) ng * WMAX * k::FF);
+    auto ffp = [&](int gi, int j) { return ff + ((size_t) gi * WMAX + j) * k::FF; };
     const int parts_gu = std::max(1, (3 * g_threads + ng - 1) / ng);
     parallel(ng * parts_gu, [&](int task) {
         const int gi = task / parts_gu, p = task % parts_gu;
         const Group& g = groups[(size_t) gi];
         const int r0 = k::FF * p / parts_gu, r1 = k::FF * (p + 1) / parts_gu;
-        float* o[k::MAXT];
+        float* o[WMAX];
         for (int j = 0; j < g.nt; ++j) o[j] = ffp(gi, j);
         if (q2_gu) {
             float gbuf[k::MAXT][k::FF], ubuf[k::MAXT][k::FF];
@@ -393,7 +399,7 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
                 for (int r = r0; r < r1; ++r) o[j][r] = (gbuf[j][r] / (1.f + std::exp(-gbuf[j][r]))) * ubuf[j][r];
             return;
         }
-        const void* a[k::MAXT];
+        const void* a[WMAX];
         for (int j = 0; j < g.nt; ++j) a[j] = act + (size_t) g.tok[j] * f.act_bytes;
         k::native_gu_rows(g.f, g.blob, a, g.nt, o, r0, r1);
     });
@@ -401,36 +407,41 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
     // 4. the down activation of each (group, token)
     uint8_t* hq = nullptr;
     k::ActQ* aq = nullptr;
-    if (q2_down) aq = grow(S.aq, (size_t) ng * k::MAXT);
-    else hq = grow(S.hq, (size_t) ng * k::MAXT * f.h_bytes);
+    if (q2_down) aq = grow(S.aq, (size_t) ng * WMAX);
+    else hq = grow(S.hq, (size_t) ng * WMAX * f.h_bytes);
     parallel(ng, [&](int gi) {
         for (int j = 0; j < groups[(size_t) gi].nt; ++j) {
             if (q2_down) {
-                k::ActQ& a = aq[(size_t) gi * k::MAXT + j];
+                k::ActQ& a = aq[(size_t) gi * WMAX + j];
                 a.bp_pairs = 0;
                 k::act_quant_any(ffp(gi, j), k::FF, a);
             } else {
-                k::native_quant_h(f, ffp(gi, j), hq + ((size_t) gi * k::MAXT + j) * f.h_bytes);
+                k::native_quant_h(f, ffp(gi, j), hq + ((size_t) gi * WMAX + j) * f.h_bytes);
             }
         }
     });
 
-    // 5. down rows straight into the output slots
+    // 5. down rows straight into the output slots (a wide group in balanced pieces of at most MAXT tokens: the down
+    // kernels take MAXT)
     const int parts_d = std::max(1, (3 * g_threads + ng - 1) / ng);
     parallel(ng * parts_d, [&](int task) {
         const int gi = task / parts_d, p = task % parts_d;
         const Group& g = groups[(size_t) gi];
         const int r0 = k::H * p / parts_d, r1 = k::H * (p + 1) / parts_d;
-        float* o[k::MAXT];
-        for (int j = 0; j < g.nt; ++j) o[j] = out + ((size_t) g.tok[j] * kk + g.slot[j]) * k::H;
-        if (q2_down) {
-            const k::ActQ* a2[k::MAXT];
-            for (int j = 0; j < g.nt; ++j) a2[j] = &aq[(size_t) gi * k::MAXT + j];
-            k::q2_rows_any(g.down, f.d_row, (int) (f.n_ff / 64), a2, g.nt, o, r0, r1);
-        } else {
-            const void* h[k::MAXT];
-            for (int j = 0; j < g.nt; ++j) h[j] = hq + ((size_t) gi * k::MAXT + j) * f.h_bytes;
-            k::native_down_rows(g.f, g.blob, h, g.nt, o, r0, r1);
+        const int pieces = (g.nt + k::MAXT - 1) / k::MAXT;
+        for (int c = 0; c < pieces; ++c) {
+            const int j0 = g.nt * c / pieces, n = g.nt * (c + 1) / pieces - j0;
+            float* o[k::MAXT];
+            for (int j = 0; j < n; ++j) o[j] = out + ((size_t) g.tok[j0 + j] * kk + g.slot[j0 + j]) * k::H;
+            if (q2_down) {
+                const k::ActQ* a2[k::MAXT];
+                for (int j = 0; j < n; ++j) a2[j] = &aq[(size_t) gi * WMAX + j0 + j];
+                k::q2_rows_any(g.down, f.d_row, (int) (f.n_ff / 64), a2, n, o, r0, r1);
+            } else {
+                const void* h[k::MAXT];
+                for (int j = 0; j < n; ++j) h[j] = hq + ((size_t) gi * WMAX + j0 + j) * f.h_bytes;
+                k::native_down_rows(g.f, g.blob, h, n, o, r0, r1);
+            }
         }
     });
     return 0;

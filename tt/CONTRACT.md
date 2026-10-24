@@ -243,10 +243,22 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   while the card computes the other group's layer.  The host work of a group hides behind the card too: every
   block's MoE read-back is queued (Moe.begin, a record_event) and routed once the group's card work is dispatched
   (Moe.route), and a QSA layer starts block k+1 before block k's host selection (Qsa.start / index / select /
-  finish, forward() is their sequence; _StepInputs keeps the two latest positions' inputs for it).  Engine
-  (stdin-protocol bench, --spec 4, prompt cache off, 32K context, warm): 2K prompt 169.5 -> 221 tok/s (12.1 -> 9.3 s),
-  8K 137.6 -> 177 tok/s (59.5 -> 46.4 s); the 128 greedy tokens after each prompt unchanged, decode unchanged
-  (22.4 tok/s); test_serve, test_qsa, test_qsa sparse, test_trace plain/spec/sparse PASS.
+  finish, forward() is their sequence).  Engine (stdin-protocol bench, --spec 4, prompt cache off, 32K context,
+  warm): 2K prompt 169.5 -> 221 tok/s (12.1 -> 9.3 s), 8K 137.6 -> 177 tok/s (59.5 -> 46.4 s); the 128 greedy tokens
+  after each prompt unchanged, decode unchanged (22.4 tok/s); test_serve, test_qsa, test_qsa sparse, test_trace
+  plain/spec/sparse PASS.  Then (same bench, tokens unchanged, the same tests PASS):
+  * _StepInputs keeps 16 blocks' RoPE tables and 2 dense masks (with 1 entry a pipelined read re-uploaded each
+    block's tables in every QSA layer) and tt-engine.sh runs OpenBLAS with 4 threads (its default 32 competed with
+    the CPU experts for the host's numpy work): 2K 238 tok/s, 8K 196.
+  * The remainder pieces (the power-of-two pieces after the whole chunks) ride in the last call's second group
+    instead of reading serially (each piece was a full 48-layer pass with nothing to overlap): 2K 277 tok/s (7.4 s),
+    8K 202 tok/s (40.6 s).  Without the MTP drafter (--spec 1) 287 / 207: its prompt cells cost 0.3 / 1.0 s.
+  * Wide CPU expert groups: libfnx_cpu groups up to kIq512WideMax (32) tokens of an expert where the gate/up runs on
+    the AVX-512 i-quant kernel, whose wide path decodes each weight block once for all of them (bitwise per token:
+    test_cpu_experts' 40-token check); the down rows in pieces of at most 8.  CPU expert time -5..-8% at 1024-2048
+    tokens per call; gate/up is 2/3 of it, the down rows (IQ4_NL / Q2_0, at most 4 tokens per decode) 1/3.
+  Now at 2K the host thread (op dispatch ~37 us per ttnn op, ~250 ops per 256-row block and layer) and the CPU
+  experts are both near their limit; at 8K the QSA layers' card time.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's

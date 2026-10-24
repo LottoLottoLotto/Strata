@@ -108,6 +108,16 @@ def main() -> int:
         check(f"layer {L} token rows independent of grouping", np.array_equal(group, alone),
               f"max |diff| {float(np.abs(group - alone).max()):.3e}")
 
+    # wide groups (a prompt chunk: more than MAXT tokens of one expert, up to kIq512WideMax per gate/up call, the down
+    # rows in pieces): every token's rows == the same token in 2-token calls (both multi-token paths)
+    for L in (0, 1):
+        x = rng.standard_normal((40, H)).astype(np.float32)
+        ids = np.tile(rng.choice(N_EXPERT, 10, replace=False).astype(np.int32), (40, 1))
+        wide = cx.moe(L, x, ids)
+        pairs = np.concatenate([cx.moe(L, x[t:t + 2], ids[t:t + 2]) for t in range(0, 40, 2)])
+        check(f"layer {L} 40 tokens of the same experts == 2-token calls", np.array_equal(wide, pairs),
+              f"max |diff| {float(np.abs(wide - pairs).max()):.3e}")
+
     # the leader-thread path (submit / wait) == moe, bitwise
     calls = {}
     for L in (0, 1, 48):

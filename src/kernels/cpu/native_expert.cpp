@@ -108,6 +108,13 @@ int native_gu_mt_min(int gu_type) {
     return iq3s_one && gu_type == 21 ? 1 : mt_min;
 }
 
+int native_gu_max_tokens(int gu_type) {
+    // native_gu_rows hands more than MAXT tokens only to the AVX-512 i-quant kernel (its wide path); every other path
+    // takes at most MAXT
+    static const bool avx512 = cpu_avx512_ok() && std::getenv("STRATA_NO_IQ512") == nullptr;
+    return avx512 && iq512_supported(gu_type) ? kIq512WideMax : MAXT;
+}
+
 void native_gu_rows(const NativeFmt& f, const uint8_t* blob, const void* const* act, int nt, float* const* ff,
                     int r0, int r1) {
     // the multi-token kernels decode the weights once for all tokens: 2.0-2.4x ggml-cpu at three tokens, no faster

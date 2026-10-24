@@ -459,11 +459,12 @@ class Engine:
             for c0, c1, groups in prompt_calls(at, to, self.chunk, PROMPT_GROUP if getattr(m, "moe", None) == "cpu"
                                                else 0):
                 if groups:
-                    Rs = m.forward_prompt(ids[c0:c1], groups=groups, block=self.chunk, keep_R=dr is not None)
-                    for g, R in enumerate(Rs or ()):
-                        a = c0 + g * self.chunk
-                        dr.cells(R, a, ids[a + 1:a + self.chunk + 1])
+                    Rs = m.forward_prompt(ids[c0:c1], groups=groups, keep_R=dr is not None)
+                    a = c0
+                    for R, rows in zip(Rs or (), (r for g in groups for r in g)):
+                        dr.cells(R, a, ids[a + 1:a + rows + 1])
                         m.free_R(R)
+                        a += rows
                 elif dr is None:
                     m.forward(ids[c0:c1], head=False)
                 else:
@@ -604,22 +605,28 @@ def prompt_pieces(c0: int, c1: int, chunk: int):
 
 
 def prompt_calls(c0: int, c1: int, chunk: int, group: int):
-    """prompt_pieces as model calls (a, b, groups): with group > 0, runs of whole chunks form TtModel.forward_prompt
-    calls of two groups of up to `group` chunks each (groups = their row counts; only chunk-row device calls: the
-    warmed shapes); everything else one forward (groups None)."""
+    """prompt_pieces as model calls (a, b, groups): with group > 0, TtModel.forward_prompt calls of two groups (each
+    a list of piece row counts: only prompt_pieces' warmed shapes) of up to `group` whole chunks each, the last call
+    with the remainder pieces too; groups None: one forward (a lone piece, or group 0)."""
     pieces = list(prompt_pieces(c0, c1, chunk))
     i = 0
     while i < len(pieces):
-        whole = 0
-        while (group and whole < 2 * group and i + whole < len(pieces)
-               and pieces[i + whole][1] - pieces[i + whole][0] == chunk):
-            whole += 1
-        if whole >= 2:
-            yield pieces[i][0], pieces[i + whole - 1][1], [(whole + 1) // 2 * chunk, whole // 2 * chunk]
-            i += whole
-        else:
+        j = i
+        while group and j < len(pieces) and j - i < 2 * group and pieces[j][1] - pieces[j][0] == chunk:
+            j += 1
+        if group and not any(b - a == chunk for a, b in pieces[j:]):
+            j = len(pieces)                            # the last call takes the remainder pieces along
+        if j - i < 2:
             yield pieces[i][0], pieces[i][1], None
             i += 1
+            continue
+        sizes = [b - a for a, b in pieces[i:j]]
+        half, k, rows = sum(sizes) / 2, 0, 0
+        while k < len(sizes) - 1 and (k == 0 or rows + sizes[k] / 2 <= half):
+            rows += sizes[k]
+            k += 1
+        yield pieces[i][0], pieces[j - 1][1], [sizes[:k], sizes[k:]]
+        i = j
 
 
 def warm_up(model, drafter: Drafter | None, chunk: int) -> None:
