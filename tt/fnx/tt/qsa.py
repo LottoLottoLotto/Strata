@@ -275,17 +275,26 @@ class _Const:
 
 class _StepInputs:
     """Position-only device inputs of one call (RoPE tables, causal mask of the dense rows), shared by every QSA layer
-    of a step: the latest KEEP (mesh, positions) entries are kept, oldest created first out, so the 12 layers of one
-    decode step upload them once and a pipelined prompt block's entry outlives the next block's start (Qsa.start)."""
-    KEEP = 2
+    of a step: the latest KEEP (mesh, positions) RoPE entries and KEEP_MASK masks are kept, oldest created first out,
+    so the 12 layers of one decode step upload them once and a pipelined prompt read (TtModel.forward_prompt: up to 8
+    blocks per layer, each block's start before the previous block's finish) uploads each block's tables once."""
+    KEEP = 16                    # RoPE tables of a 256-row block: 0.75 MB
+    KEEP_MASK = 2                # a dense mask: up to 28 MB (256 rows x 12 heads x 2304 cells, f32)
     entries: dict = {}           # key -> {name: tensor}, in creation order
+    masks: dict = {}             # (key, d) -> mask, in creation order
+
+    @staticmethod
+    def _put(cache: dict, keep: int, key, make):
+        if key not in cache:
+            while len(cache) >= keep:
+                v = cache.pop(next(iter(cache)))
+                _free(*(v.values() if isinstance(v, dict) else (v,)))
+            cache[key] = make()
+        return cache[key]
 
     @classmethod
     def get(cls, mesh, pos: list[int]) -> dict:
-        key = (id(mesh), pos[0], len(pos))
-        if key not in cls.entries:
-            while len(cls.entries) >= cls.KEEP:
-                _free(*cls.entries.pop(next(iter(cls.entries))).values())
+        def make():
             c, s = rope_cos_sin(pos)                                        # [T, 32] f32
             tensors = {}
             for D in (HEAD_DIM, IDX_DIM):                                   # [1, T, 1, D], broadcast over heads:
@@ -295,29 +304,29 @@ class _StepInputs:
                 S[:, :ROPE_DIM] = np.concatenate([-s, s], 1)
                 tensors[f"C{D}"] = _dev(mesh, C[None, :, None, :])
                 tensors[f"S{D}"] = _dev(mesh, S[None, :, None, :])
-            cls.entries[key] = tensors
-        return cls.entries[key]
+            return tensors
+        return cls._put(cls.entries, cls.KEEP, (id(mesh), pos[0], len(pos)), make)
 
     @classmethod
     def clear(cls) -> None:
         """Free the cached entries (fnx.tt.trace: nothing allocated after a capture may stay alive across a replay)."""
         for tensors in cls.entries.values():
             _free(*tensors.values())
-        cls.entries = {}
+        _free(*cls.masks.values())
+        cls.entries, cls.masks = {}, {}
 
     @classmethod
     def dense_mask(cls, mesh, pos: list[int], d: int):
         """Additive mask [1, 1, d*12, n_pad] of the first d rows (row t*12+h' -> pos[t]): -1e9 where cell > pos[t]."""
-        tensors = cls.get(mesh, pos)
-        key = ("mask", d)
-        if key not in tensors:
+        def make():
             n_pad = -(-(pos[d - 1] + 1) // SPAN) * SPAN
             cells = _dev(mesh, np.arange(n_pad, dtype=f32)[None, None, None, :])
             rows = _dev(mesh, np.repeat(np.asarray(pos[:d], f32), GROUP)[None, None, :, None])
             later = ttnn.gt(cells, rows)                                    # 1.0 where cell > row position
-            tensors[key] = ttnn.multiply(later, MASKED)
+            mask = ttnn.multiply(later, MASKED)
             _free(cells, rows, later)
-        return tensors[key]
+            return mask
+        return cls._put(cls.masks, cls.KEEP_MASK, (id(mesh), pos[0], len(pos), d), make)
 
 
 class Qsa:

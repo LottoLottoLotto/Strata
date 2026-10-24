@@ -24,7 +24,9 @@
 # reset).  The lock wait itself is not bounded: run the server with STRATA_ENGINE_READY_S=0 (its #1317 READY timeout
 # SIGKILLs this script, which skips the cleanup above).
 # Env: FNX_DATA, FNX_IMAGE, FNX_DEVICE_LOCK, FNX_READY_S, TT_SMI (default: tt-smi on PATH, else ~/.local/bin/tt-smi);
-# FNX_*, STRATA_*, TT_METAL_LOGGER* and TTNN_* pass into the container.
+# FNX_*, STRATA_*, TT_METAL_LOGGER*, TTNN_*, OPENBLAS_* and OMP_* pass into the container.  OPENBLAS_NUM_THREADS
+# defaults to 4: numpy's host math (routing, QSA selection) with OpenBLAS's default 32 threads competes with the 16
+# CPU-expert threads (IQ3_S 8K prompt read 177 -> 190 tok/s, 2K 221 -> 227, 2026-10-24).
 # Engine version: the engine prints INFO engine=<CMakeLists.txt project version>; setup writes BUILD.json beside this
 # script with the same number.
 set -uo pipefail
@@ -57,7 +59,8 @@ READY_FILE=$LOGS/$NAME.ready                        # touched by fnx.serve_engin
 rm -f "$READY_FILE"
 export FNX_READY_FILE=$READY_FILE
 ENVS=(-e "FNX_DATA=$DATA")
-while IFS= read -r kv; do ENVS+=(-e "$kv"); done < <(env | grep -E '^(FNX_|STRATA_|TT_METAL_LOGGER|TTNN_)')
+ENVS+=(-e "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-4}")
+while IFS= read -r kv; do ENVS+=(-e "$kv"); done < <(env | grep -E '^(FNX_|STRATA_|TT_METAL_LOGGER|TTNN_|OMP_)')
 VOLS=()
 for d in "${MOUNTS[@]}"; do VOLS+=(-v "$d:$d"); done
 for d in /dev/hugepages /dev/hugepages-1G; do [ -d "$d" ] && VOLS+=(-v "$d:$d"); done
