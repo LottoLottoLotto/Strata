@@ -257,8 +257,15 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
     the AVX-512 i-quant kernel, whose wide path decodes each weight block once for all of them (bitwise per token:
     test_cpu_experts' 40-token check); the down rows in pieces of at most 8.  CPU expert time -5..-8% at 1024-2048
     tokens per call; gate/up is 2/3 of it, the down rows (IQ4_NL / Q2_0, at most 4 tokens per decode) 1/3.
-  Now at 2K the host thread (op dispatch ~37 us per ttnn op, ~250 ops per 256-row block and layer) and the CPU
-  experts are both near their limit; at 8K the QSA layers' card time.
+  * The next group's CPU expert call starts as soon as the last one finishes (Moe.wait_cpu, then start, then the
+    last group's combine and upload), and the drafter's prompt cells run as each block's last layer completes
+    (forward_prompt on_final; the first group's while the card and the CPU still work on the second; the same MTP
+    acceptance): 2K 296 tok/s (6.9 s), 8K 211 tok/s (38.8 s); 15 CPU-expert threads instead of 16: the same.
+  What bounds the read now (2026-10-24, per-wait profile): the host thread.  At 2K it waits 0.6 s of 6.9 (the CPU
+  experts are busy 5.5 s): ttnn op dispatch (~37 us per op; a GDN layer's 256-row block is ~130 ops, 65 of them the
+  GDN's eight 32-row passes, 32 the HC kernels' one launch per 32-row tile), routing (fnx_route, ~1.4 ms per block),
+  the CPU parts' combine and upload.  At 8K add the QSA host selection (~8 s, per-row exact rescoring in numpy) and
+  the card's sparse attention (the host waits 3.5 s on the card in QSA layers).
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
