@@ -285,10 +285,14 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   What bounds the read now (2026-10-24): the card and the CPU experts, not Python.  The main thread's time inside
   ttnn calls (35% of a 2K read in the stack samples) is mostly back-pressure: a call that writes or reads data
   (from_torch of the CPU experts' sums, the read-backs) waits for the busy command queue; the same 36 layers dispatch
-  in 29.5 ms when nothing else is queued.  At 2K the CPU experts are busy ~5.5 s of 6.4 and the card most of the
-  rest of the time (a GDN layer's 256-row chunk 7.1 ms, of which the recurrence kernel ~5 ms); at 8K the card's QSA
-  sparse attention (per 16-row group 1.9 ms: P V 0.95, the K/V gathers 0.5) and the GDN recurrence dominate.  The
-  next gains are card kernels (the GDN recurrence across more cores, the sparse gathers) and CPU expert kernels.
+  in 29.5 ms when nothing else is queued.  Measured floor (the CPU experts' library call replaced by zeros, the rest
+  unchanged): a 2K read 5.64 -> 3.69 s, an 8K read 33.3 -> 25.5 s.  So 2K is bound by the CPU experts (busy ~97% of
+  the read) and 8K mostly by the card: its QSA sparse attention (per 16-row group 1.9 ms: P V 0.95, the K/V gathers
+  0.5) and the GDN recurrence (a 256-row chunk ~5 ms of a GDN layer's 7.1).  Card kernels (the GDN recurrence across
+  more cores, the sparse gathers) help 8K and decode, not 2K.  Rejected for the CPU: moving the weight signs from
+  the activations to the decoded weights with a +128 activation offset (one vector op less per token and 64
+  weights) is not exact - Q8_K maps every block's largest |x| to -128, whose negation wraps, so the current kernel
+  computes |w| x -128 there whatever the sign; matching that costs what the trick saves.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
