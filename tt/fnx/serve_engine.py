@@ -459,12 +459,10 @@ class Engine:
             for c0, c1, groups in prompt_calls(at, to, self.chunk, PROMPT_GROUP if getattr(m, "moe", None) == "cpu"
                                                else 0):
                 if groups:
-                    Rs = m.forward_prompt(ids[c0:c1], groups=groups, keep_R=dr is not None)
-                    a = c0
-                    for R, rows in zip(Rs or (), (r for g in groups for r in g)):
-                        dr.cells(R, a, ids[a + 1:a + rows + 1])
+                    def cells(a, rows, R, c0=c0):       # the drafter's K/V while the model reads the rest
+                        dr.cells(R, c0 + a, ids[c0 + a + 1:c0 + a + rows + 1])
                         m.free_R(R)
-                        a += rows
+                    m.forward_prompt(ids[c0:c1], groups=groups, on_final=cells if dr is not None else None)
                 elif dr is None:
                     m.forward(ids[c0:c1], head=False)
                 else:

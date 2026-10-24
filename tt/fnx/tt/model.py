@@ -339,7 +339,7 @@ class TtModel:
         _free(head_in)
         return (logits, ids, R) if keep_R else (logits, ids)
 
-    def forward_prompt(self, tokens, groups: list[list[int]], keep_R: bool = False):
+    def forward_prompt(self, tokens, groups: list[list[int]], on_final=None):
         """Prompt rows without the head, as consecutive row groups whose CPU experts overlap the device.  `groups`:
         each group's blocks as row counts, in token order; the device runs every layer in one call per block
         (forward()'s ops and shapes for that row count); the MoE of a group is one CPU expert call over all its
@@ -351,15 +351,18 @@ class TtModel:
         read-back is queued and routed after the group's device work is dispatched (Moe.begin / route), and a QSA
         layer starts block k+1 before block k's host selection (Qsa.start / index / select / finish).  The device state
         and arithmetic are those of consecutive forward(head=False) calls of the blocks; only the CPU experts' token
-        grouping is the group's (Moe.start).  The CPU MoE only (the device MoE has no host phase to hide).  -> None,
-        or with keep_R each block's final residual, in token order (release each through free_R())."""
+        grouping is the group's (Moe.start).  The CPU MoE only (the device MoE has no host phase to hide).
+        on_final(offset, rows, R): called with each block's final residual (its rows' offset in `tokens`, in token
+        order) as soon as its last layer completes - the first group's while the device and the CPU still work on the
+        rest - and owns R from then on (release it through free_R()); without it the residuals are freed."""
         if self._win is not None:
             raise RuntimeError("TtModel.forward_prompt: commit() the last verify window first")
         if self.moe != "cpu":
             raise RuntimeError("TtModel.forward_prompt: the CPU MoE only")
         tokens = np.asarray(tokens, dtype=np.int64).reshape(-1)
-        if sum(map(sum, groups)) != len(tokens) or not all(g and min(g) > 0 for g in groups):
-            raise ValueError(f"blocks {groups} do not cover {len(tokens)} rows")
+        if len(groups) < 2 or sum(map(sum, groups)) != len(tokens) or not all(g and min(g) > 0 for g in groups):
+            raise ValueError(f"blocks {groups}: two groups or more must cover {len(tokens)} rows (a group's next "
+                             "layer waits for its MoE, which completes during the next group's layer)")
         if self._trace is not None:
             self._trace.sync()                         # the host indexer rows a traced step deferred
         gs, a = [], 0
@@ -368,16 +371,23 @@ class TtModel:
             for n in sizes:
                 tok = tokens[a:a + n]
                 e_ple = self.ple.upload_rows(tok)      # the PLE n-gram history: blocks in token order
-                g.append(dict(pos=np.arange(self.pos + a, self.pos + a + n), e_ple=e_ple, R=self.embed(tok)))
+                g.append(dict(a=a, pos=np.arange(self.pos + a, self.pos + a + n), e_ple=e_ple, R=self.embed(tok)))
                 a += n
             gs.append(g)
-        pending = None                                 # (blocks, their layer's Moe, the begun calls)
+        pending = None                                 # (blocks, their layer's Moe, the begun calls, the layer)
+        last = len(self.layers) - 1
 
-        def finish():
-            g, moe, cs = pending
+        def finish(done):
+            g, moe, cs, L = done
             for blk, c, bo in zip(g, cs, moe.complete(cs)):
                 blk["R"] = _replace(blk["R"], hc_write(blk["R"], bo, c["inj"]))
                 _free(c["mixed"], bo, c["inj"])
+                if L == last:
+                    R = blk.pop("R")
+                    if on_final is None:
+                        _free(R)
+                    else:
+                        on_final(blk["a"], len(blk["pos"]), R)
 
         for L, (hc_attn, mix, hc_ffn, moe) in enumerate(self.layers):
             for g in gs:
@@ -410,17 +420,14 @@ class TtModel:
                         ffn(blk, mix.forward(blk["mixed"]))
                 for c in cs:
                     moe.route(c)
-                if pending is not None:
-                    finish()
+                done, pending = pending, (g, moe, cs, L)
+                if done is not None:                   # the CPU takes the next call before the host combines
+                    done[1].wait_cpu(done[2])
                 moe.start(cs)
-                pending = (g, moe, cs)
-        finish()
+                if done is not None:
+                    finish(done)
+        finish(pending)
         self.pos += len(tokens)
-        Rs = [blk["R"] for g in gs for blk in g]
-        if keep_R:
-            return Rs
-        _free(*Rs)
-        return None
 
     # ---- verify-window rollback
     def _gdn_layers(self) -> list:

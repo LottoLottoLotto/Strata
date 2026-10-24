@@ -494,7 +494,7 @@ class Moe:
 
     def start(self, cs: list[dict]) -> None:
         """Start the CPU experts of the begun blocks cs (one library call over their rows; the library runs one call
-        at a time: complete() any earlier blocks first), then dispatch each block's shared and resident experts."""
+        at a time: wait_cpu() any earlier blocks first), then dispatch each block's shared and resident experts."""
         cpu = [c["p"] for c in cs if c["p"].cpu_ids is not None]
         if cpu:
             parts = self.experts.submit(self.L, np.concatenate([p.x for p in cpu]),
@@ -514,10 +514,16 @@ class Moe:
                     ttnn.deallocate(pr["xb"])
             c["y"] = y
 
-    def complete(self, cs: list[dict]) -> list:
-        """Wait for start()'s CPU experts -> each block's bo [1,1,rows,2560] float32 TILE, as forward() returns it."""
-        if any(c["p"].parts is not None for c in cs):
+    def wait_cpu(self, cs: list[dict]) -> None:
+        """Wait for start()'s CPU experts (the parts stay readable after the next start())."""
+        if any(c["p"].parts is not None for c in cs) and not cs[0].get("waited"):
             self.experts.wait()
+        cs[0]["waited"] = True
+
+    def complete(self, cs: list[dict]) -> list:
+        """Wait for start()'s CPU experts (unless wait_cpu() did) -> each block's bo [1,1,rows,2560] float32 TILE, as
+        forward() returns it."""
+        self.wait_cpu(cs)
         out = []
         for c in cs:
             pr, p, y = c["pr"], c["p"], c["y"]
