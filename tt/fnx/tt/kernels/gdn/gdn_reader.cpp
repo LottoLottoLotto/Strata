@@ -18,6 +18,7 @@ constexpr uint32_t HIST_BYTES = 3 * ROWS * 128;
 constexpr uint32_t ROW_BYTES = ROWS * 128 + 64;   // saved window row: 12 compact rows + the 4 a/b words (padded)
 constexpr uint32_t HV = 48;
 constexpr uint32_t Z0 = 320, AB0 = 512;       // mega tile columns of z and of the a/b hi/lo block
+constexpr uint32_t MEGA_TILES = 520;          // mega tile columns: token t is row t % 32 of tile row t / 32
 constexpr uint32_t OUT = 1, SNAP = 2, REPLAY = 4;
 
 // byte offset of (row, column half) in an fp32 tile
@@ -127,20 +128,23 @@ void kernel_main() {
                 cb_reserve_back(c_z, 4);
                 zt = get_write_ptr(c_z);
             }
+            const uint32_t mrow = (t >> 5) * MEGA_TILES;   // token t's tile row of mega (any T; one for T <= 32)
             for (uint32_t half = 0; half < 2; ++half) {
-                const uint32_t src = row_off(t, half);
+                const uint32_t src = row_off(t & 31, half);
                 for (uint32_t r = 0; r < 4; ++r) {
-                    noc_async_read(mega.get_noc_addr(kh * 4 + r, src), el + crow(r, half), 64);
-                    noc_async_read(mega.get_noc_addr(64 + kh * 4 + r, src), el + crow(4 + r, half), 64);
-                    noc_async_read(mega.get_noc_addr(128 + h * 4 + r, src), el + crow(8 + r, half), 64);
+                    noc_async_read(mega.get_noc_addr(mrow + kh * 4 + r, src), el + crow(r, half), 64);
+                    noc_async_read(mega.get_noc_addr(mrow + 64 + kh * 4 + r, src), el + crow(4 + r, half), 64);
+                    noc_async_read(mega.get_noc_addr(mrow + 128 + h * 4 + r, src), el + crow(8 + r, half), 64);
                     if (out) {
-                        noc_async_read(mega.get_noc_addr(Z0 + h * 4 + r, src), zt + r * TB + row_off(0, half), 64);
+                        noc_async_read(mega.get_noc_addr(mrow + Z0 + h * 4 + r, src), zt + r * TB + row_off(0, half),
+                                       64);
                     }
                 }
             }
             for (uint32_t j = 0; j < 4; ++j) {
                 const uint32_t col = 64 * j + h;
-                noc_async_read(mega.get_noc_addr(AB0 + col / 32, row_off(t, (col % 32) / 16)), tok + 2048 + 64 * j, 64);
+                noc_async_read(mega.get_noc_addr(mrow + AB0 + col / 32, row_off(t & 31, (col % 32) / 16)),
+                               tok + 2048 + 64 * j, 64);
             }
             noc_async_read_barrier();
             volatile tt_l1_ptr uint32_t* words = reinterpret_cast<volatile tt_l1_ptr uint32_t*>(tok);

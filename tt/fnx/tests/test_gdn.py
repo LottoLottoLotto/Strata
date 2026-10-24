@@ -157,8 +157,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--layers", default="0,1,2,4,5,6")
     ap.add_argument("--tokens", type=int, default=32)
-    ap.add_argument("--schedules", default="1,8,trace,win",
-                    help="tokens per eager call, 'trace' (T=1 replay) or 'win' (fused: verify windows + rollback)")
+    ap.add_argument("--schedules", default="1,8,trace,win,wide",
+                    help="tokens per eager call, 'trace' (T=1 replay), 'win' (fused: verify windows + rollback) or "
+                         "'wide' (fused: 64/128/256-row blocks vs the same rows in 32-row calls, bitwise)")
     ap.add_argument("--impls", default="fused,ops,native")
     args = ap.parse_args()
     w = Weights()
@@ -189,13 +190,26 @@ def main() -> int:
                 st = rg.GdnState()
                 refs = {"refq": (rg.gdn(gd.uploaded_weights(W), L, mixed, st), st), "ref": ref}
                 for sched in args.schedules.split(","):
+                    same = lambda a, b: np.array_equal(np.asarray(a, np.float32).view(np.uint32),
+                                                       np.asarray(b, np.float32).view(np.uint32))
+                    if sched == "wide":                # GdnFused's one-pass prompt blocks (32-row multiples)
+                        if impl != "fused":
+                            continue
+                        for T in (64, 128, 256):
+                            if T > len(mixed):
+                                continue
+                            bo, (S, hist), _ = run_tt(mesh, gd, mixed[:T], T)
+                            bo1, (S1, hist1), _ = run_tt(mesh, gd, mixed[:T], 32)
+                            good = same(bo, bo1) and same(S, S1) and same(hist, hist1)
+                            ok &= good
+                            print(f"  L{L} {impl:6s} one {T}-row block: bo, S, hist bitwise {T // 32} 32-row calls: "
+                                  f"{'PASS' if good else 'FAIL'}", flush=True)
+                        continue
                     if sched == "win":
                         if impl != "fused":
                             continue
                         bo, (S, hist), n = run_windows(mesh, gd, mixed)
                         bo1, (S1, hist1), _ = run_tt(mesh, gd, mixed[:n], 1)
-                        same = lambda a, b: np.array_equal(np.asarray(a, np.float32).view(np.uint32),
-                                                           np.asarray(b, np.float32).view(np.uint32))
                         good = same(bo, bo1) and same(S, S1) and same(hist, hist1)
                         ok &= good
                         print(f"  L{L} {impl:6s} verify windows of 4 rows + rollback, {n} rows kept: bo, S, hist "

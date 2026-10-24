@@ -261,11 +261,23 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
     last group's combine and upload), and the drafter's prompt cells run as each block's last layer completes
     (forward_prompt on_final; the first group's while the card and the CPU still work on the second; the same MTP
     acceptance): 2K 296 tok/s (6.9 s), 8K 211 tok/s (38.8 s); 15 CPU-expert threads instead of 16: the same.
-  What bounds the read now (2026-10-24, per-wait profile): the host thread.  At 2K it waits 0.6 s of 6.9 (the CPU
-  experts are busy 5.5 s): ttnn op dispatch (~37 us per op; a GDN layer's 256-row block is ~130 ops, 65 of them the
-  GDN's eight 32-row passes, 32 the HC kernels' one launch per 32-row tile), routing (fnx_route, ~1.4 ms per block),
-  the CPU parts' combine and upload.  At 8K add the QSA host selection (~8 s, per-row exact rescoring in numpy) and
-  the card's sparse attention (the host waits 3.5 s on the card in QSA layers).
+  * The CPU expert library forms each token's router-weighted sum in its threads (fnx_moe_submit_sum: numpy
+    einsum's order and bits, test_cpu_experts), a group's blocks route on 4 threads (fnx_route releases the GIL), a
+    QSA prompt block appends its K/V in one kv_write per cache (was one per 16 tokens): 2K 303, 8K 215.
+  * AVX-512 IQ4_NL down rows, two tokens per register (bitwise the AVX2 kernel; CPU expert time -6% at 1024
+    tokens), the drafter's prompt K/V in one front call per block: 2K 310, 8K 216.
+  * GdnFused runs a prompt block of 32-row multiples as ONE packed mega projection (per_core_M = rows / 32: the
+    weight read once, each output tile's K blocks in the one-tile-row order), ONE fused kernel run over its tokens
+    (the reader / writer take token t from tile row t / 32) and ONE output projection - bitwise the 32-row passes
+    (test_gdn "wide"); a 256-row block 6.6 -> 5.7 ms on the card and ~55 fewer host ops: 2K 320 tok/s (6.4 s), 8K
+    222 tok/s (36.9 s).  Tried and dropped: the QSA host selection on a thread (no gain: 8K is card-bound there), an
+    explicit program for the sparse P V matmul (6x faster, but 50x the default's error: it is not the same
+    arithmetic).
+  What bounds the read now (2026-10-24, sampled main thread): at 2K the card, the CPU experts and the host thread
+  are about equally loaded (the host waits 22% of its time on the card's read-backs, 16% on the CPU experts); the
+  rest of its time is ttnn op dispatch (~30 us per op; the HC kernels launch once per 32-row tile, 32 launches per
+  block and layer).  At 8K the card's QSA sparse attention (per 16-row group 1.9 ms: P V 0.95, the K/V gathers 0.5)
+  and the host selection (~8 s) dominate.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's

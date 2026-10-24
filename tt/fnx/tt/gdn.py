@@ -477,6 +477,7 @@ class GdnFused:
         self.mega = PackedMatmul(self.w_mega, MEGA_PC, HIFI4, F32, L1)
         self.w_out = _cached(mesh, f"{p}.out_T", BFP8, lambda: torch.from_numpy(W.out.T.copy()))
         self.out_pc = _decode_progcfg(VALUE_DIM, N, 40)
+        self._wide: dict = {}      # M tile rows -> (mega PackedMatmul, out program config): prompt blocks (forward)
         # per v-head h: conv taps of its rows (q and k of key head h % 16, v of h), then ssm_norm
         par = np.zeros((HV, 4, ROWS, 32), np.float32)
         for h in range(HV):
@@ -575,14 +576,39 @@ class GdnFused:
             x = mixed if T <= 32 else ttnn.slice(mixed, [0, 0, t0, 0], [1, 1, t0 + n, N])
             yield x, n, x is not mixed
 
+    def _wide_ops(self, m: int):
+        """The projections of an m-tile-row block: MEGA_PC and out_pc with per_core_M = m (each output tile
+        accumulates its K blocks as the one-tile-row programs do: bitwise their rows, the weights read once)."""
+        if m not in self._wide:
+            one = lambda pc, **kw: ttnn.MatmulMultiCoreReuseMultiCast1DProgramConfig(
+                compute_with_storage_grid_size=pc.compute_with_storage_grid_size, in0_block_w=pc.in0_block_w,
+                out_subblock_h=1, out_subblock_w=pc.out_subblock_w, per_core_M=m, per_core_N=pc.per_core_N,
+                fuse_batch=True, fused_activation=None, mcast_in0=True)
+            self._wide[m] = (PackedMatmul(self.w_mega, one(MEGA_PC), HIFI4, F32, DRAM), one(self.out_pc))
+        return self._wide[m]
+
     def forward(self, mixed, snap: bool = False):
-        """snap=True: a verify window (T <= 32 rows), to be kept in part by rollback(n_keep) before the next call."""
+        """snap=True: a verify window (T <= 32 rows), to be kept in part by rollback(n_keep) before the next call.
+        A prompt block of 32-row multiples (T > 32) runs as one projection, one kernel run over its T tokens (the
+        kernel reads token t from tile row t / 32) and one output projection: bitwise the 32-row passes."""
         T = int(mixed.shape[-2])
         snap = snap and T > 1
         if snap:
             if T > 32:
                 raise ValueError(f"GdnFused verify window of {T} rows (at most 32)")
             self.window_buffers(T)
+        elif T > 32 and T % 32 == 0:
+            mega_mm, out_pc = self._wide_ops(T // 32)
+            mega = mega_mm(mixed)
+            y = ttnn.empty([1, 1, T, VALUE_DIM], F32, ttnn.TILE_LAYOUT, self.mesh, DRAM)
+            io = {"mega": mega, "par": self.params, "hist_in": self.hist, "hist_out": self.hist, "s_in": self.S,
+                  "s_out": self.S, "y": y}
+            ttnn.generic_op(_unique(io), self._program(io, T, OUT))
+            ttnn.deallocate(mega)
+            bo = ttnn.linear(y, self.w_out, dtype=F32, memory_config=DRAM, program_config=out_pc,
+                             compute_kernel_config=HIFI4)
+            ttnn.deallocate(y)
+            return bo
         outs = []
         for x, n, own in self._chunks(mixed):
             y = self._recur(x, n, snap)

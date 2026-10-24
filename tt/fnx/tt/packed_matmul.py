@@ -13,8 +13,8 @@ bitwise the stock matmul's (fnx/tests/test_packed.py).  Defaults group 2, 2 in1 
 other variants (groups 5/10, 3-4 slots, 2-3 outstanding) were within 1% on the LM head, draft head and GDN mega.
 
 Requirements: weight bfloat8_b/bfloat4_b, DRAM interleaved, in packed order for (K tiles, N tiles, per_core_N, group);
-K tiles % (8 * group) == 0; program config 1D mcast_in0, per_core_M 1, out block = per_core_N, in0_block_w | K tiles,
-2 <= workers <= grid; input one tile row (<= 32 rows).
+K tiles % (8 * group) == 0; program config 1D mcast_in0, out block = per_core_N, in0_block_w | K tiles,
+2 <= workers <= grid; input per_core_M tile rows (one for decode: <= 32 rows).
 """
 from __future__ import annotations
 
@@ -109,8 +109,11 @@ def place_packed(part, dst, col0: int, layout: PackedLayout, chunk: int = 128) -
 
 
 class PackedMatmul:
-    """x [1,1,T<=32,K] @ packed weight -> [1,1,T,N] of `dtype` in `memory_config`: one generic_op, bitwise the stock
-    ttnn.linear(x, W, program_config=program_config, dtype=dtype, compute_kernel_config=..., memory_config=...)."""
+    """x [1,1,T,K] @ packed weight -> [1,1,T,N] of `dtype` in `memory_config`: one generic_op, bitwise the stock
+    ttnn.linear(x, W, program_config=program_config, dtype=dtype, compute_kernel_config=..., memory_config=...).
+    T <= 32 * per_core_M: one tile row (decode) or, with per_core_M = M, M tile rows of a prompt block (each output
+    tile accumulates its K blocks in the same order, so its rows are bitwise the one-tile-row calls': the weight is
+    read once for all of them)."""
 
     def __init__(self, weight, program_config, compute_kernel_config, dtype=ttnn.bfloat16,
                  memory_config=ttnn.DRAM_MEMORY_CONFIG, group: int = GROUP, cb_slots: int = 2, outstanding: int = 1):
@@ -124,7 +127,7 @@ class PackedMatmul:
         mc = weight.memory_config()
         if (weight.dtype not in TILE_BYTES or mc.memory_layout != ttnn.TensorMemoryLayout.INTERLEAVED
                 or mc.buffer_type != ttnn.BufferType.DRAM or math.prod(list(weight.padded_shape)[:-2]) != 1
-                or not pc.mcast_in0 or pc.gather_in0 or pc.untilize_out or pc.per_core_M != 1
+                or not pc.mcast_in0 or pc.gather_in0 or pc.untilize_out
                 or pc.out_block_w != pc.per_core_N or k_tiles % pc.in0_block_w
                 or self.layout.workers > grid.x * grid.y):
             raise ValueError("PackedMatmul: unsupported weight/program geometry")
@@ -195,10 +198,10 @@ class PackedMatmul:
         return desc
 
     def __call__(self, x):
-        rows = int(x.shape[-2])
-        if (rows > TILE or int(x.padded_shape[-2]) != TILE or math.prod(list(x.padded_shape)[:-2]) != 1
+        rows, m = int(x.shape[-2]), TILE * self.pc.per_core_M
+        if (rows > m or int(x.padded_shape[-2]) != m or math.prod(list(x.padded_shape)[:-2]) != 1
                 or int(x.shape[-1]) != self.layout.k_tiles * TILE):
-            raise ValueError("PackedMatmul: input must be one tile row [1,1,<=32,K]")
+            raise ValueError(f"PackedMatmul: input must be [1,1,<={m},K] ({self.pc.per_core_M} tile rows)")
         out = ttnn.empty([1, 1, rows, self.layout.n_tiles * TILE], self.dtype, ttnn.TILE_LAYOUT, x.device(), self.mc)
         key = (int(x.buffer_address()), int(out.buffer_address()), tuple(x.shape), x.dtype,
                x.memory_config().buffer_type)

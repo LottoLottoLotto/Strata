@@ -8,6 +8,7 @@
 namespace {
 constexpr uint32_t c_s0 = 6, c_s1 = 8, c_y = 23, c_sdone = 24, c_si = 25, c_sim = 26, c_s0ready = 27, c_snapok = 28;
 constexpr uint32_t TB = 4096;
+constexpr uint32_t Y_TILES = 192;            // y tile columns (6144): token t is row t % 32 of tile row t / 32
 constexpr uint32_t OUT = 1, SNAP = 2;
 inline uint32_t row_off(uint32_t row, uint32_t half) { return ((row >> 4) * 2 + half) * 1024 + (row & 15) * 64; }
 }  // namespace
@@ -65,7 +66,8 @@ void kernel_main() {
             const uint32_t src = get_read_ptr(c_y);
             for (uint32_t r = 0; r < 4; ++r) {
                 for (uint32_t half = 0; half < 2; ++half) {
-                    noc_async_write(src + r * TB + half * 1024, yacc.get_noc_addr(4 * h + r, row_off(t, half)), 64);
+                    noc_async_write(src + r * TB + half * 1024,
+                                    yacc.get_noc_addr((t >> 5) * Y_TILES + 4 * h + r, row_off(t & 31, half)), 64);
                 }
             }
             noc_async_write_barrier();
