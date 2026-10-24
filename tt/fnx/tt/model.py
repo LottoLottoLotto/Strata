@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
@@ -56,6 +57,8 @@ from .moe import DeviceExperts, Moe
 from .moe_device import F_BFP4, MoeDevice, host_matrices, matrix_bytes, quant_layer
 from .ple import Ple
 from .qsa import Qsa
+
+ROUTE_THREADS = ThreadPoolExecutor(4, thread_name_prefix="fnx-route")   # forward_prompt: a group's blocks' routing
 
 # FNX_MOE default per variant (fnx.paths.DEFAULT_MOE; quality gates: coder 2026-10-07, iq3s 2026-10-10).  The Coder's
 # GPTQ-BFP4 device MoE is its fastest path within the gate.  iq3s keeps 65% of its experts off the card: its device
@@ -419,7 +422,8 @@ class TtModel:
                     for blk in g:
                         ffn(blk, mix.forward(blk["mixed"]))
                 for c in cs:
-                    moe.route(c)
+                    moe.fetch(c)
+                list(ROUTE_THREADS.map(moe.route, cs))   # fnx_route releases the GIL: the blocks route in parallel
                 done, pending = pending, (g, moe, cs, L)
                 if done is not None:                   # the CPU takes the next call before the host combines
                     done[1].wait_cpu(done[2])

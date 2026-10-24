@@ -127,20 +127,22 @@ def _hi_lo(p: np.ndarray) -> torch.Tensor:
     return torch.cat([hi, lo], 1)
 
 
-def kv_write(src, dst, pos_dev, cells: int):
+def kv_write(src, dst, pos_dev, cells: int, max_rows: int = KV_ROWS_MAX):
     """Trace-safe KV append (kernels/qsa/kv_write.cpp): rows of src [1, H, T, D] row-major (row j*T + t) -> rows
     j*cells + p0 + t of dst [1, 1, H*cells, D] row-major, p0 = word 0 of pos_dev (uint32 [1, 1, 1, 32] row-major).
     The same bytes as ttnn.experimental.slice_write at [0, 0, p0, 0] of the [1, H, cells, D] view, but the position
-    is read on the device, so a captured trace writes where the refreshed pos_dev says."""
+    is read on the device, so a captured trace writes where the refreshed pos_dev says.  The one core stages all H*T
+    rows in L1: at most max_rows (KV_ROWS_MAX for the traced steps; an eager prompt block passes its own row count,
+    one call instead of one per 16 tokens - the kernel binary is the same, only its buffer size differs)."""
     H, T, D = (int(s) for s in tuple(src.shape)[1:])
     size_of = {ttnn.bfloat16: 2, ttnn.float32: 4}
     if src.dtype != dst.dtype or src.dtype not in size_of:
         raise ValueError("kv_write: bfloat16 or float32 rows of the cache's dtype")
     row = D * size_of[src.dtype]
-    if H * T > KV_ROWS_MAX:
-        raise ValueError(f"kv_write: {H * T} rows > {KV_ROWS_MAX}")
+    if H * T > max_rows:
+        raise ValueError(f"kv_write: {H * T} rows > {max_rows}")
     core = ttnn.CoreRangeSet({ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(0, 0))})
-    size = POS_PAGE + KV_ROWS_MAX * row
+    size = POS_PAGE + max_rows * row
     cb = ttnn.CBDescriptor(total_size=size, core_ranges=core, format_descriptors=[
         ttnn.CBFormatDescriptor(buffer_index=0, data_format=ttnn.bfloat16, page_size=size)])
     acc = [a for t in (src, dst, pos_dev) for a in ttnn.TensorAccessorArgs(t).get_compile_time_args()]
@@ -446,21 +448,15 @@ class Qsa:
             v = ttnn.reshape(ttnn.slice(qkv, [0, 0, 0, 2 * QD + KD], [1, 1, T, 2 * QD + 2 * KD]),
                              [1, T, N_HEAD_KV, HEAD_DIM])
             ttnn.deallocate(qkv)
-            G = KV_ROWS_MAX // N_HEAD_KV                # tokens per kv_write call
-            for src, dst in ((kr, self.K), (v, self.V)):
+            pd = _pos_page(self.mesh, pos[0]) if step is None else step.kv   # the position as device data: one
+            for src, dst in ((kr, self.K), (v, self.V)):                       # program for every cell
                 s16 = ttnn.typecast(src, ttnn.bfloat16)
                 hm = (ttnn.reshape(s16, [1, N_HEAD_KV, 1, HEAD_DIM]) if T == 1 else ttnn.permute(s16, (0, 2, 1, 3)))
                 rm = ttnn.to_layout(hm, ttnn.ROW_MAJOR_LAYOUT)
-                if step is None:                        # the position as device data: one program for every cell
-                    for t0 in range(0, T, G):           # (a slice_write bakes its start cell into the program)
-                        t1 = min(T, t0 + G)
-                        part = rm if t1 - t0 == T else ttnn.slice(rm, [0, 0, t0, 0], [1, N_HEAD_KV, t1, HEAD_DIM])
-                        pd = _pos_page(self.mesh, pos[0] + t0)
-                        kv_write(part, dst, pd, self.cells)
-                        _free(pd, *(() if part is rm else (part,)))
-                else:
-                    kv_write(rm, dst, step.kv, self.cells)
+                kv_write(rm, dst, pd, self.cells, max_rows=max(KV_ROWS_MAX, N_HEAD_KV * T))
                 _free(s16, rm, *(() if hm is s16 else (hm,)))
+            if step is None:
+                _free(pd)
             _free(kr, v)
         out = {"qr": qr, "gate": gate, "scores": None, "qi": None}
         if sparse:

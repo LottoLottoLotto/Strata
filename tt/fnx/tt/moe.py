@@ -375,7 +375,8 @@ class Plan:
     wt: np.ndarray           # [T, 10] route weights
     loc: np.ndarray          # [T, 10] device-local expert index, -1 = CPU slot
     refined: int
-    parts: np.ndarray | None = None   # [T, 10, 2560] being filled by CpuExperts.submit (None: no CPU slot)
+    parts: np.ndarray | None = None   # [T, 10, 2560] being filled by CpuExperts.submit (None: no CPU slot); after
+                                      # Moe.start, the router-weighted sums [T, 2560] (CpuExperts.submit_sum)
     dev: object = None       # the layer's DeviceExperts (None: none resident)
     words: np.ndarray | None = None   # with plan(s_cap=...): the device-expert metadata row (DeviceExperts.meta_words)
     cpu_ids: np.ndarray | None = None  # [T, 10] the CPU slots' expert ids (negative = not a CPU slot); None: no CPU slot
@@ -486,22 +487,28 @@ class Moe:
         pr = self.pre(mixed)
         return dict(pr=pr, host=pr["both"].cpu(blocking=False), event=ttnn.record_event(self.mesh, 0))
 
-    def route(self, c: dict) -> None:
-        """Host: wait for begin()'s read-back and route it; starts nothing on the CPU."""
+    def fetch(self, c: dict) -> None:
+        """Host: wait for begin()'s read-back."""
         ttnn.event_synchronize(c.pop("event"))
-        host = c.pop("host").to_numpy().reshape(c["pr"]["T"], N_EMBD + ROUTER_COLS)
-        c["p"] = self.plan(host, submit=False)
+        c["host"] = c["host"].to_numpy().reshape(c["pr"]["T"], N_EMBD + ROUTER_COLS)
+
+    def route(self, c: dict) -> None:
+        """Host: route fetch()'s rows (fnx_route releases the GIL: blocks may route on threads); starts nothing on
+        the CPU."""
+        c["p"] = self.plan(c.pop("host"), submit=False)
 
     def start(self, cs: list[dict]) -> None:
-        """Start the CPU experts of the begun blocks cs (one library call over their rows; the library runs one call
-        at a time: wait_cpu() any earlier blocks first), then dispatch each block's shared and resident experts."""
+        """Start the CPU experts of the routed blocks cs (one library call over their rows, which also forms each
+        token's weighted sum, combine()'s bits; the library runs one call at a time: wait_cpu() any earlier blocks
+        first), then dispatch each block's shared and resident experts."""
         cpu = [c["p"] for c in cs if c["p"].cpu_ids is not None]
         if cpu:
-            parts = self.experts.submit(self.L, np.concatenate([p.x for p in cpu]),
-                                        np.concatenate([p.cpu_ids for p in cpu]))
+            wt = [p.wt if p.dev is None else np.where(p.on_dev, 0, p.wt).astype(np.float32) for p in cpu]
+            sums = self.experts.submit_sum(self.L, np.concatenate([p.x for p in cpu]),
+                                           np.concatenate([p.cpu_ids for p in cpu]), np.concatenate(wt))
             a = 0
             for p in cpu:
-                p.parts, a = parts[a:a + p.T], a + p.T
+                p.parts, a = sums[a:a + p.T], a + p.T           # [T, 2560]: already weighted and summed
         for c in cs:
             pr, p = c["pr"], c["p"]
             y = self.shared(pr)
@@ -530,7 +537,7 @@ class Moe:
             if p.parts is None:
                 out.append(y)
                 continue
-            routed = self.combine(p)
+            routed = p.parts
             rows, T = pr["rows"], pr["T"]
             padded = routed if T == rows else np.concatenate([routed, np.zeros((rows - T, N_EMBD), np.float32)])
             r = ttnn.from_torch(torch.from_numpy(padded).reshape(1, 1, rows, N_EMBD), dtype=ttnn.float32,

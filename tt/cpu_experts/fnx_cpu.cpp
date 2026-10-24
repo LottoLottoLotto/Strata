@@ -293,7 +293,7 @@ struct Group {
 struct Scratch {
     std::vector<uint8_t> act, hq;
     std::vector<k::ActQ> actq, aq;
-    std::vector<float> ff;
+    std::vector<float> ff, parts;
     std::vector<Group> groups;
     std::vector<int> open = std::vector<int>(4096, -1);   // expert -> its open group (ids are < n_expert <= 4096)
 };
@@ -305,7 +305,23 @@ T* grow(std::vector<T>& v, size_t n) {
     return v.data();
 }
 
-int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, float* out, char* err, int errlen) {
+// The weighted sum of one token's kk slot outputs, sum = (((0 + p0 w0) + p1 w1) + ...) + p(kk-1) w(kk-1): every
+// product and sum rounded on its own (this file is built without FMA contraction), the order and the bits of
+// numpy's einsum("tkd,tk->td") that fnx.tt.moe used on the host.
+void weighted_sum(const float* parts, const float* wt, int kk, float* sum) {
+    for (int d = 0; d < k::H; ++d) sum[d] = 0.f;
+    for (int s = 0; s < kk; ++s) {
+        const float w = wt[s];
+        const float* p = parts + (size_t) s * k::H;
+        for (int d = 0; d < k::H; ++d) sum[d] = sum[d] + p[d] * w;
+    }
+}
+
+// out: each slot's unweighted output; or, with wt (nt, kk) and sum (nt, 2560), out == nullptr and only each token's
+// weighted sum is written (the slot outputs go to scratch).
+int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, float* out, const float* wt, float* sum,
+             char* err, int errlen) {
+    if (sum != nullptr) out = grow(g_scratch.parts, (size_t) nt * kk * k::H);
     if (layer < 0 || layer >= (int) g_layers.size() || !g_layers[(size_t) layer].set) {
         set_err(err, errlen, "layer not registered");
         return -1;
@@ -444,6 +460,11 @@ int moe_call(int layer, int nt, int kk, const float* x, const int32_t* ids, floa
             }
         }
     });
+    // 6. the weighted sums, a token per task
+    if (sum != nullptr)
+        parallel(nt, [&](int t) {
+            weighted_sum(out + (size_t) t * kk * k::H, wt + (size_t) t * kk, kk, sum + (size_t) t * k::H);
+        });
     return 0;
 }
 
@@ -462,9 +483,10 @@ public:
         bell_.ring();
         th_.join();
     }
-    void submit(int layer, int nt, int kk, const float* x, const int32_t* ids, float* out) {
+    void submit(int layer, int nt, int kk, const float* x, const int32_t* ids, float* out, const float* wt = nullptr,
+                float* sum = nullptr) {
         wait();                                   // a call submitted and never waited for (its caller failed)
-        job_ = Job{layer, nt, kk, x, ids, out};
+        job_ = Job{layer, nt, kk, x, ids, out, wt, sum};
         bell_.ring();
     }
     // Spin until the last submitted call is done; its (return code, microseconds), err filled on failure.
@@ -481,6 +503,8 @@ private:
         const float* x = nullptr;
         const int32_t* ids = nullptr;
         float* out = nullptr;
+        const float* wt = nullptr;
+        float* sum = nullptr;
     };
     void loop() {
         uint32_t seen = 0;
@@ -489,7 +513,7 @@ private:
             if (stop_.load(std::memory_order_acquire)) return;
             const auto t0 = Clock::now();
             const Job& j = job_;
-            rc_ = moe_call(j.layer, j.nt, j.kk, j.x, j.ids, j.out, err_, (int) sizeof err_);
+            rc_ = moe_call(j.layer, j.nt, j.kk, j.x, j.ids, j.out, j.wt, j.sum, err_, (int) sizeof err_);
             us_ = std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
             done_.store(seen, std::memory_order_release);
         }
@@ -573,7 +597,7 @@ int fnx_set_layer(int layer, int gu_type, int d_type, int n_embd, int n_ff, cons
 ///   out  (nt, kk, 2560) f32  each slot's UNWEIGHTED expert output; skipped slots are set to zero
 int fnx_moe(int layer, int nt, int kk, const float* x, const int32_t* ids, float* out, char* err, int errlen) {
     if (g_leader) g_leader->wait();
-    return moe_call(layer, nt, kk, x, ids, out, err, errlen);
+    return moe_call(layer, nt, kk, x, ids, out, nullptr, nullptr, err, errlen);
 }
 
 /// fnx_moe on the leader thread: returns at once (-1 with `err` for an unregistered layer); x, ids and out must
@@ -589,6 +613,23 @@ int fnx_moe_submit(int layer, int nt, int kk, const float* x, const int32_t* ids
         return -1;
     }
     g_leader->submit(layer, nt, kk, x, ids, out);
+    return 0;
+}
+
+/// fnx_moe_submit returning each token's router-weighted sum instead of the slot outputs:
+///   wt   (nt, kk) f32        the slots' weights (0 for a slot computed elsewhere)
+///   sum  (nt, 2560) f32      sum over the slots of weight * expert output (numpy einsum's order and bits)
+int fnx_moe_submit_sum(int layer, int nt, int kk, const float* x, const int32_t* ids, const float* wt, float* sum,
+                       char* err, int errlen) {
+    if (!g_leader) {
+        set_err(err, errlen, "fnx_init first");
+        return -1;
+    }
+    if (layer < 0 || layer >= (int) g_layers.size() || !g_layers[(size_t) layer].set) {
+        set_err(err, errlen, "layer not registered");
+        return -1;
+    }
+    g_leader->submit(layer, nt, kk, x, ids, nullptr, wt, sum);
     return 0;
 }
 

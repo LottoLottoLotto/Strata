@@ -134,6 +134,19 @@ def main() -> int:
     check("a pending submit is finished before the next call", np.array_equal(a, ref0) and np.array_equal(b, ref1),
           "both bitwise")
 
+    # the weighted sums the library forms (fnx.tt.moe pipelined prompts) == the host einsum over moe's slots, bitwise;
+    # zero weights (slots computed on the device) and skipped slots included
+    for L in (0, 1):
+        x = rng.standard_normal((40, H)).astype(np.float32)
+        ids = np.stack([rng.choice(N_EXPERT, 10, replace=False) for _ in range(40)]).astype(np.int32)
+        ids[::3, 2] = -1
+        wt = rng.random((40, 10)).astype(np.float32)
+        wt[1::4, 5] = 0
+        ref = np.einsum("tkd,tk->td", cx.moe(L, x, ids), wt)
+        s = cx.submit_sum(L, x, ids, wt)
+        cx.wait()
+        check(f"layer {L} submit_sum == einsum(moe)", np.array_equal(s, ref), f"max |diff| {float(np.abs(s - ref).max()):.3e}")
+
     print("test_cpu_experts", "FAILED" if fails else "PASS")
     return 1 if fails else 0
 

@@ -29,14 +29,16 @@ def lib(path: str | None = None):
                                     C.c_char_p, C.c_int]
         L.fnx_moe.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_char_p, C.c_int]
         L.fnx_moe_submit.argtypes = L.fnx_moe.argtypes
+        L.fnx_moe_submit_sum.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p,
+                                         C.c_char_p, C.c_int]
         L.fnx_moe_wait.argtypes = [C.POINTER(C.c_double), C.c_char_p, C.c_int]
         L.fnx_route.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_double,
                                 C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_int,
                                 C.POINTER(C.c_int)]
         L.fnx_qsa_assemble.argtypes = [C.c_int, C.c_int, C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p,
                                        C.c_void_p, C.c_void_p, C.c_int, C.c_void_p]
-        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_wait, L.fnx_route,
-                  L.fnx_qsa_assemble):
+        for f in (L.fnx_init, L.fnx_set_layer, L.fnx_moe, L.fnx_moe_submit, L.fnx_moe_submit_sum, L.fnx_moe_wait,
+                  L.fnx_route, L.fnx_qsa_assemble):
             f.restype = C.c_int
         _LIB = L
     return _LIB
@@ -158,6 +160,22 @@ class CpuExperts:
         _check(self.L.fnx_moe_submit(layer, nt, k, x.ctypes.data, ids.ctypes.data, out.ctypes.data, self._err, 512),
                self._err)
         self._pending = (x, ids, out)
+        return out
+
+    def submit_sum(self, layer: int, x: np.ndarray, ids: np.ndarray, wt: np.ndarray) -> np.ndarray:
+        """`submit` returning each token's weighted sum instead: wt (nt, k) f32 slot weights (0 for a slot computed
+        elsewhere) -> sum (nt, 2560) f32, filled when `wait` returns: the bits of np.einsum("tkd,tk->td", moe(..),
+        wt), computed by the library's threads."""
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        ids = np.ascontiguousarray(ids, dtype=np.int32)
+        wt = np.ascontiguousarray(wt, dtype=np.float32)
+        nt, k = ids.shape
+        if wt.shape != (nt, k) or x.shape[0] != nt:
+            raise ValueError(f"x, ids, wt rows differ: {x.shape}, {ids.shape}, {wt.shape}")
+        out = np.empty((nt, x.shape[1]), dtype=np.float32)
+        _check(self.L.fnx_moe_submit_sum(layer, nt, k, x.ctypes.data, ids.ctypes.data, wt.ctypes.data,
+                                         out.ctypes.data, self._err, 512), self._err)
+        self._pending = (x, ids, wt, out)
         return out
 
     def wait(self) -> float:
