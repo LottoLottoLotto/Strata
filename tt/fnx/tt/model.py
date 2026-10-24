@@ -339,6 +339,72 @@ class TtModel:
         _free(head_in)
         return (logits, ids, R) if keep_R else (logits, ids)
 
+    def forward_prompt(self, tokens, groups: list[int], block: int, keep_R: bool = False):
+        """Prompt rows without the head, as consecutive row groups (`groups`: rows per group, each a multiple of
+        `block`) whose CPU experts overlap the device.  The device runs every layer in `block`-row calls (forward()'s
+        ops and shapes); the MoE of a group is one CPU expert call over all its blocks' rows (Moe.start).
+
+        Per layer, group g's blocks are mixed and routed while group g-1's CPU experts still run; group g-1's MoE then
+        completes, g's CPU experts start, and the device moves on to group g+1 (the last group's CPU experts overlap
+        the first group's next layer).  The device state and arithmetic are those of consecutive forward(head=False)
+        calls of `block` rows; only the CPU experts' token grouping is the group's (Moe.begin).  The CPU MoE only (the
+        device MoE has no host phase to hide).  -> None, or with keep_R each block's final residual, in token order
+        (release each through free_R())."""
+        if self._win is not None:
+            raise RuntimeError("TtModel.forward_prompt: commit() the last verify window first")
+        if self.moe != "cpu":
+            raise RuntimeError("TtModel.forward_prompt: the CPU MoE only")
+        tokens = np.asarray(tokens, dtype=np.int64).reshape(-1)
+        if sum(groups) != len(tokens) or any(n <= 0 or n % block for n in groups):
+            raise ValueError(f"groups {groups} of {block}-row blocks do not cover {len(tokens)} rows")
+        if self._trace is not None:
+            self._trace.sync()                         # the host indexer rows a traced step deferred
+        gs, a = [], 0
+        for n in groups:
+            g = []
+            for b in range(a, a + n, block):
+                tok = tokens[b:b + block]
+                e_ple = self.ple.upload_rows(tok)      # the PLE n-gram history: blocks in token order
+                g.append(dict(pos=np.arange(self.pos + b, self.pos + b + block), e_ple=e_ple, R=self.embed(tok)))
+            gs.append(g)
+            a += n
+        pending = None                                 # (blocks, their layer's Moe, the begun calls)
+
+        def finish():
+            g, moe, cs = pending
+            for blk, c, bo in zip(g, cs, moe.complete(cs)):
+                blk["R"] = _replace(blk["R"], hc_write(blk["R"], bo, c["inj"]))
+                _free(c["mixed"], bo, c["inj"])
+
+        for L, (hc_attn, mix, hc_ffn, moe) in enumerate(self.layers):
+            for g in gs:
+                cs = []
+                for blk in g:
+                    R = blk["R"]
+                    if L == PLE_LAYER:
+                        R = _replace(R, self.ple.forward(blk["e_ple"], R))
+                        _free(blk["e_ple"])
+                    mixed, inj = hc_attn.forward(R)
+                    bo = mix.forward(mixed, blk["pos"]) if is_qsa(L) else mix.forward(mixed)
+                    R = _replace(R, hc_write(R, bo, inj))
+                    _free(mixed, bo, inj)
+                    blk["R"] = R
+                    mixed, inj = hc_ffn.forward(R)
+                    c = moe.begin(mixed)               # waits for the device, not for the CPU experts
+                    c.update(mixed=mixed, inj=inj)
+                    cs.append(c)
+                if pending is not None:
+                    finish()
+                moe.start(cs)
+                pending = (g, moe, cs)
+        finish()
+        self.pos += len(tokens)
+        Rs = [blk["R"] for g in gs for blk in g]
+        if keep_R:
+            return Rs
+        _free(*Rs)
+        return None
+
     # ---- verify-window rollback
     def _gdn_layers(self) -> list:
         return [mix for L, (_, mix, _, _) in enumerate(self.layers) if not is_qsa(L)]

@@ -378,6 +378,7 @@ class Plan:
     parts: np.ndarray | None = None   # [T, 10, 2560] being filled by CpuExperts.submit (None: no CPU slot)
     dev: object = None       # the layer's DeviceExperts (None: none resident)
     words: np.ndarray | None = None   # with plan(s_cap=...): the device-expert metadata row (DeviceExperts.meta_words)
+    cpu_ids: np.ndarray | None = None  # [T, 10] the CPU slots' expert ids (negative = not a CPU slot); None: no CPU slot
 
     @property
     def on_dev(self) -> np.ndarray:
@@ -427,19 +428,21 @@ class Moe:
         xb = self.dev.prepare(x, rows) if self.dev else None
         return dict(x=x, logits=logits, both=both, xb=xb, rows=rows, T=T)
 
-    def plan(self, host: np.ndarray, s_cap: int | None = None) -> Plan:
+    def plan(self, host: np.ndarray, s_cap: int | None = None, submit: bool = True) -> Plan:
         """Host: read-back rows [T, 2560 + N_EXPERT + 32] -> routing (fnx.cpu_experts.route, libfnx_cpu's
         fnx_route.cpp: top-10 of the device logits with exact refinement of near ties, module docstring; f64 softmax
-        weights over the 10 picks), the device/CPU split, and the CPU experts submitted to libfnx_cpu's leader thread.
+        weights over the 10 picks), the device/CPU split, and the CPU experts submitted to libfnx_cpu's leader thread
+        (submit=False: not yet; start() does, for a call that must wait for another call's CPU experts).
         s_cap (T <= 32, resident experts): also the device experts' metadata row padded to s_cap entries (words)."""
         T = host.shape[0]
         xh = np.ascontiguousarray(host[:, :N_EMBD])
         lg = np.ascontiguousarray(host[:, N_EMBD:N_EMBD + N_EXPERT])
         ids, wt, cpu_ids, n_refined, words, _ = route(lg, xh, self.wr_host, self.wr_norm, self.local, PRODUCT_ERR,
                                                        s_cap if self.dev is not None else None)
-        parts = self.experts.submit(self.L, xh, cpu_ids) if (cpu_ids >= 0).any() else None
+        cpu = cpu_ids if (cpu_ids >= 0).any() else None
+        parts = self.experts.submit(self.L, xh, cpu) if submit and cpu is not None else None
         return Plan(T=T, x=xh, logits=lg, gate_logit=host[:, N_EMBD + N_EXPERT].copy(), ids=ids, wt=wt,
-                    loc=self.local[ids], refined=n_refined, parts=parts, dev=self.dev, words=words)
+                    loc=self.local[ids], refined=n_refined, parts=parts, dev=self.dev, words=words, cpu_ids=cpu)
 
     def shared(self, pre: dict):
         """Device: shared expert sigmoid(gate) * W_d (silu(W_g x) * W_u x), f32 TILE [1,1,rows,2560]."""
@@ -456,8 +459,13 @@ class Moe:
         if p.parts is None:
             return np.zeros((p.T, N_EMBD), np.float32), 0.0
         cpu_us = self.experts.wait()
+        return self.combine(p), cpu_us
+
+    @staticmethod
+    def combine(p: Plan) -> np.ndarray:
+        """Host: the weighted sum f32 [T, 2560] of p's finished CPU expert parts."""
         wt = p.wt if p.dev is None else np.where(p.on_dev, 0, p.wt).astype(np.float32)
-        return np.einsum("tkd,tk->td", p.parts, wt), cpu_us
+        return np.einsum("tkd,tk->td", p.parts, wt)
 
     @staticmethod
     def post(y, r):
@@ -465,6 +473,60 @@ class Moe:
         if r.layout != ttnn.TILE_LAYOUT:
             r = ttnn.to_layout(r, ttnn.TILE_LAYOUT)
         return ttnn.add(y, r)
+
+    # ---- the call in two phases, for pipelined prompt reads (TtModel.forward_prompt): begin() routes a row block
+    # while the CPU experts of earlier blocks still run; start() runs the CPU experts of several begun blocks as ONE
+    # library call (more tokens per expert: the weights are decoded once per group of up to 8 tokens) after the
+    # earlier blocks' complete().  The device arithmetic is forward()'s, op for op; a token's CPU expert rows may
+    # round differently than in a one-block call when its expert's token grouping changes (Strata #152).
+    def begin(self, mixed) -> dict:
+        """Device router + the read-back + the host routing of mixed [1,1,rows,2560]; starts nothing on the CPU.
+        mixed must stay allocated until complete() (the f32 MoE input may be mixed itself)."""
+        pr = self.pre(mixed)
+        host = pr["both"].cpu(blocking=True).to_numpy().reshape(pr["T"], N_EMBD + ROUTER_COLS)
+        return dict(pr=pr, p=self.plan(host, submit=False))
+
+    def start(self, cs: list[dict]) -> None:
+        """Start the CPU experts of the begun blocks cs (one library call over their rows; the library runs one call
+        at a time: complete() any earlier blocks first), then dispatch each block's shared and resident experts."""
+        cpu = [c["p"] for c in cs if c["p"].cpu_ids is not None]
+        if cpu:
+            parts = self.experts.submit(self.L, np.concatenate([p.x for p in cpu]),
+                                        np.concatenate([p.cpu_ids for p in cpu]))
+            a = 0
+            for p in cpu:
+                p.parts, a = parts[a:a + p.T], a + p.T
+        for c in cs:
+            pr, p = c["pr"], c["p"]
+            y = self.shared(pr)
+            if pr["xb"] is not None:
+                if p.on_dev.any():
+                    yd, _ = self.dev.run(pr["xb"], pr["rows"], pr["T"], p.loc, p.wt)
+                    y = ttnn.add(y, yd)
+                    ttnn.deallocate(yd)
+                else:
+                    ttnn.deallocate(pr["xb"])
+            c["y"] = y
+
+    def complete(self, cs: list[dict]) -> list:
+        """Wait for start()'s CPU experts -> each block's bo [1,1,rows,2560] float32 TILE, as forward() returns it."""
+        if any(c["p"].parts is not None for c in cs):
+            self.experts.wait()
+        out = []
+        for c in cs:
+            pr, p, y = c["pr"], c["p"], c["y"]
+            if p.parts is None:
+                out.append(y)
+                continue
+            routed = self.combine(p)
+            rows, T = pr["rows"], pr["T"]
+            padded = routed if T == rows else np.concatenate([routed, np.zeros((rows - T, N_EMBD), np.float32)])
+            r = ttnn.from_torch(torch.from_numpy(padded).reshape(1, 1, rows, N_EMBD), dtype=ttnn.float32,
+                                layout=ttnn.TILE_LAYOUT, device=self.mesh, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+            out.append(self.post(y, r))
+            ttnn.deallocate(y)
+            ttnn.deallocate(r)
+        return out
 
     def forward(self, mixed, T: int | None = None):
         """mixed [1,1,rows,2560] TILE (float32 or bfloat16), tokens in rows [0, T) (default T = rows)

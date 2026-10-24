@@ -33,7 +33,10 @@ positional), so one that is not a prefix of `live` after a request is dropped.  
 leaves nothing to continue.  `--prompt-cache 0` turns reuse off (every request from token 0).
 
 Prompt: positions [resume, n-1) in chunks of `--prefill` tokens through TtModel.forward(head=False) (split at the
-checkpoint position); the last prompt token is the first decode step (T=1), as in Strata.
+checkpoint position); the last prompt token is the first decode step (T=1), as in Strata.  With the CPU MoE, runs of
+whole chunks go through TtModel.forward_prompt calls of two groups of up to PROMPT_GROUP chunks (prompt_calls): the
+device keeps its chunk-row calls, each group's CPU experts are one call over the group's rows (fewer weight decodes
+per token) and run while the device computes the other group's layer.
 
 Sampling: greedy (no temperature key, or <= 0) uses the device argmax; penalty keys (penalty_last_n > 0 with a
 non-neutral penalty) and temperature > 0 read the logits back and run Strata's sampled chain on the host, a
@@ -99,6 +102,8 @@ CTX_MAX = 32768                # advertised context limit (READY): fnx.tt.qsa's 
 TURN_TOKEN = 248045            # <|im_start|>: the checkpoint goes where the prompt's last one begins
 PENALTY_WINDOW_CAP = 4096      # generate.cpp:5989
 TOP_K_MAX = 64                 # the sampled path's widest list (sampler.cu:423-426)
+PROMPT_GROUP = int(os.environ.get("FNX_PROMPT_GROUP", 4))   # chunks per CPU-expert call of a pipelined prompt read
+                                                            # (prompt_calls; 0 = no pipelining)
 DEFAULT_CHUNK = paths.DEFAULT_CHUNK   # prompt rows per TtModel call (`--prefill auto`): the variant's (fnx.paths)
 ERR_EXPECTED = "ERR expected: GEN <max_new> <id,id,...> or GENI <max_new> <file> <id,id,...>"
 DEFAULT_SPEC = 4              # verify-window rows with the MTP drafter (1 + 3 drafts)
@@ -451,8 +456,15 @@ class Engine:
         for to in (turn_at, n - 1):
             if to <= at:
                 continue
-            for c0, c1 in prompt_pieces(at, to, self.chunk):
-                if dr is None:
+            for c0, c1, groups in prompt_calls(at, to, self.chunk, PROMPT_GROUP if getattr(m, "moe", None) == "cpu"
+                                               else 0):
+                if groups:
+                    Rs = m.forward_prompt(ids[c0:c1], groups=groups, block=self.chunk, keep_R=dr is not None)
+                    for g, R in enumerate(Rs or ()):
+                        a = c0 + g * self.chunk
+                        dr.cells(R, a, ids[a + 1:a + self.chunk + 1])
+                        m.free_R(R)
+                elif dr is None:
                     m.forward(ids[c0:c1], head=False)
                 else:
                     _, _, R = m.forward(ids[c0:c1], head=False, keep_R=True)
@@ -589,6 +601,25 @@ def prompt_pieces(c0: int, c1: int, chunk: int):
         s = 1 << ((c1 - a).bit_length() - 1)
         yield a, a + s
         a += s
+
+
+def prompt_calls(c0: int, c1: int, chunk: int, group: int):
+    """prompt_pieces as model calls (a, b, groups): with group > 0, runs of whole chunks form TtModel.forward_prompt
+    calls of two groups of up to `group` chunks each (groups = their row counts; only chunk-row device calls: the
+    warmed shapes); everything else one forward (groups None)."""
+    pieces = list(prompt_pieces(c0, c1, chunk))
+    i = 0
+    while i < len(pieces):
+        whole = 0
+        while (group and whole < 2 * group and i + whole < len(pieces)
+               and pieces[i + whole][1] - pieces[i + whole][0] == chunk):
+            whole += 1
+        if whole >= 2:
+            yield pieces[i][0], pieces[i + whole - 1][1], [(whole + 1) // 2 * chunk, whole // 2 * chunk]
+            i += whole
+        else:
+            yield pieces[i][0], pieces[i][1], None
+            i += 1
 
 
 def warm_up(model, drafter: Drafter | None, chunk: int) -> None:

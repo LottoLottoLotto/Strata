@@ -229,6 +229,21 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   prefill 134 -> 176 tok/s, TTFT 15.6 -> 11.9 s, decode 20.3 tok/s.  What is left is the MoE stage (77% of a prompt
   read): 38% of the routed slots run on the CPU (IQ3_S expert bytes at the RAM's ~40-46 GB/s, re-read per chunk) and
   48 card <-> host round trips per chunk.
+- Pipelined prompt reading (2026-10-24; TtModel.forward_prompt, Moe.begin/start/complete, serve_engine.prompt_calls,
+  FNX_PROMPT_GROUP chunks per group, default 4, 0 = off).  Measured split of an IQ3_S 8K prompt read at chunk 256
+  (a throwaway per-module profile, device synced around each module): MoE 33.8 s (the CPU experts 27.4 s of it; the card idle meanwhile), QSA
+  22.7 s (host selection 8.0 s, sparse gather + attention ~11 s), GDN 7.9 s, HC 2.5 s; 2K: MoE 9.5 (CPU 7.7), GDN
+  2.3, QSA 1.5.  The CPU experts are compute-bound (IQ3_S codebook decode), not re-read bound: Strata's kernels on
+  this host (Ryzen 9 9950X, 16 threads; 32 no faster) take 13.5 / 8.9 / 7.7 us per CPU slot at 256 / 1024 / 4096
+  tokens per call, and bigger device chunks alone gave 3-7% (chunk 1024 at a 16K context).  So runs of whole chunks
+  go as two groups of up to 4 chunks per call: the card keeps its 256-row calls (its state and arithmetic are bitwise
+  those of consecutive forward() calls; with 1-chunk groups the whole read is: 2600-token prompt, next-token logits
+  bitwise), one CPU expert call per group (1024 tokens: an expert's token grouping changes, so its rows may round as
+  Strata #152 describes), and per layer one group's CPU experts run while the card computes the other group's layer.
+  Engine (stdin-protocol bench, --spec 4, prompt cache off, 32K context, warm): 2K prompt 169.5 -> 206 tok/s (12.1 -> 9.9 s),
+  8K 137.6 -> 151 tok/s (59.5 -> 54.2 s); the 128 greedy tokens after each prompt unchanged, decode unchanged
+  (22.1-22.8 tok/s); test_serve PASS.  An 8K read is now bound by its 12 QSA layers (~1.8 s each, the card's sparse
+  attention plus the host selection in series), the rest by the CPU experts.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
