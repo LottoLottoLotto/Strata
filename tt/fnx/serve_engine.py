@@ -329,7 +329,8 @@ class Drafter:
         n = len(next_tokens)
         self.tail = (cell0 + n - 1, self._row(R, n - 1))
         Rn = R if R.shape[-2] == n else self.rows(R, 0, n)
-        self.mtp.prefill(Rn, next_tokens, cell0)
+        self.mtp.prefill(Rn, next_tokens, cell0, chunk=max(n, 1))   # one front per prompt block (the drafter's
+                                                                     # K/V; the tokens never depend on its bits)
         if Rn is not R:
             self.ttnn.deallocate(Rn)
 

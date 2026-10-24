@@ -183,7 +183,10 @@ void native_down_rows(const NativeFmt& f, const uint8_t* blob, const void* const
         return;
     }
     if (cpu_avx2_ok() && nt >= mt_min && f.d_type == 20 && iq4nl_mt) {   // #152: the same rule as the gate/up rows
-        iq4nl256_down_rows(blob + f.down_off, f.d_row, (int) f.n_ff, hq, nt, out, r0, r1);
+        // AVX-512 (STRATA_NO_IQ512 drops it, as for the gate/up rows): two tokens per register, the same bits
+        static const bool avx512 = cpu_avx512_ok() && std::getenv("STRATA_NO_IQ512") == nullptr;
+        (avx512 ? iq4nl512_down_rows : iq4nl256_down_rows)(blob + f.down_off, f.d_row, (int) f.n_ff, hq, nt, out, r0,
+                                                           r1);
         return;
     }
     const ggml_vec_dot_t dot = traits(f.d_type)->vec_dot;
