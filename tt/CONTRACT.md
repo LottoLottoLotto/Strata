@@ -273,11 +273,22 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
     222 tok/s (36.9 s).  Tried and dropped: the QSA host selection on a thread (no gain: 8K is card-bound there), an
     explicit program for the sparse P V matmul (6x faster, but 50x the default's error: it is not the same
     arithmetic).
-  What bounds the read now (2026-10-24, sampled main thread): at 2K the card, the CPU experts and the host thread
-  are about equally loaded (the host waits 22% of its time on the card's read-backs, 16% on the CPU experts); the
-  rest of its time is ttnn op dispatch (~30 us per op; the HC kernels launch once per 32-row tile, 32 launches per
-  block and layer).  At 8K the card's QSA sparse attention (per 16-row group 1.9 ms: P V 0.95, the K/V gathers 0.5)
-  and the host selection (~8 s) dominate.
+  * Traced prompt chunks: tried as a prototype, not adopted (2026-10-24).  The card work of the 36 GDN layers for one
+    256-row chunk (per layer: hc_attn -> GdnFused wide -> hc_write -> hc_ffn -> Moe.pre; Moe.shared; y + r ->
+    hc_write; resident experts left out) captured as one trace per layer with fixed buffers and replayed, against
+    the same ops dispatched eagerly from Python: eager host dispatch 29.5 ms, card 257.3 ms; traced host 0.0 ms,
+    card 257.1 ms; results bitwise equal.  Dispatch costs ~0.8 ms of host time per chunk and layer against ~7.1 ms of
+    card time (5.7 of it the GDN), and the command queue absorbs it: the host runs ahead, so a trace saves nothing on
+    the card and frees host time the pipeline does not need.  A full traced prompt read would also need every
+    tensor that lives across a replay (each chunk's residual, the pending MoE halves of the other group, the eager
+    QSA layers' work) in buffers allocated before the captures - a redesign of forward_prompt - for no measured gain.
+  What bounds the read now (2026-10-24): the card and the CPU experts, not Python.  The main thread's time inside
+  ttnn calls (35% of a 2K read in the stack samples) is mostly back-pressure: a call that writes or reads data
+  (from_torch of the CPU experts' sums, the read-backs) waits for the busy command queue; the same 36 layers dispatch
+  in 29.5 ms when nothing else is queued.  At 2K the CPU experts are busy ~5.5 s of 6.4 and the card most of the
+  rest of the time (a GDN layer's 256-row chunk 7.1 ms, of which the recurrence kernel ~5 ms); at 8K the card's QSA
+  sparse attention (per 16-row group 1.9 ms: P V 0.95, the K/V gathers 0.5) and the GDN recurrence dominate.  The
+  next gains are card kernels (the GDN recurrence across more cores, the sparse gathers) and CPU expert kernels.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
