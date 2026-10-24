@@ -346,10 +346,12 @@ class TtModel:
 
         Per layer, group g's blocks are mixed and routed while group g-1's CPU experts still run; group g-1's MoE then
         completes, g's CPU experts start, and the device moves on to group g+1 (the last group's CPU experts overlap
-        the first group's next layer).  The device state and arithmetic are those of consecutive forward(head=False)
-        calls of `block` rows; only the CPU experts' token grouping is the group's (Moe.begin).  The CPU MoE only (the
-        device MoE has no host phase to hide).  -> None, or with keep_R each block's final residual, in token order
-        (release each through free_R())."""
+        the first group's next layer).  Within a group the host work hides behind the device's: every block's MoE
+        read-back is queued and routed after the group's device work is dispatched (Moe.begin / route), and a QSA
+        layer starts block k+1 before block k's host selection (Qsa.start / index / select / finish).  The device state
+        and arithmetic are those of consecutive forward(head=False) calls of `block` rows; only the CPU experts' token
+        grouping is the group's (Moe.start).  The CPU MoE only (the device MoE has no host phase to hide).  -> None,
+        or with keep_R each block's final residual, in token order (release each through free_R())."""
         if self._win is not None:
             raise RuntimeError("TtModel.forward_prompt: commit() the last verify window first")
         if self.moe != "cpu":
@@ -379,20 +381,34 @@ class TtModel:
         for L, (hc_attn, mix, hc_ffn, moe) in enumerate(self.layers):
             for g in gs:
                 cs = []
-                for blk in g:
-                    R = blk["R"]
-                    if L == PLE_LAYER:
-                        R = _replace(R, self.ple.forward(blk["e_ple"], R))
-                        _free(blk["e_ple"])
-                    mixed, inj = hc_attn.forward(R)
-                    bo = mix.forward(mixed, blk["pos"]) if is_qsa(L) else mix.forward(mixed)
-                    R = _replace(R, hc_write(R, bo, inj))
-                    _free(mixed, bo, inj)
-                    blk["R"] = R
-                    mixed, inj = hc_ffn.forward(R)
-                    c = moe.begin(mixed)               # waits for the device, not for the CPU experts
+
+                def ffn(blk, bo):                      # the mixer's output -> residual -> MoE input, router queued
+                    blk["R"] = _replace(blk["R"], hc_write(blk["R"], bo, blk["inj"]))
+                    _free(blk.pop("mixed"), bo, blk.pop("inj"))
+                    mixed, inj = hc_ffn.forward(blk["R"])
+                    c = moe.begin(mixed)
                     c.update(mixed=mixed, inj=inj)
                     cs.append(c)
+
+                for blk in g:
+                    if L == PLE_LAYER:
+                        blk["R"] = _replace(blk["R"], self.ple.forward(blk["e_ple"], blk["R"]))
+                        _free(blk.pop("e_ple"))
+                    blk["mixed"], blk["inj"] = hc_attn.forward(blk["R"])
+                if is_qsa(L):
+                    nxt = mix.start(g[0]["mixed"], g[0]["pos"])
+                    for k, blk in enumerate(g):
+                        q = nxt
+                        mix.index(q)
+                        if k + 1 < len(g):
+                            nxt = mix.start(g[k + 1]["mixed"], g[k + 1]["pos"])
+                        mix.select(q)
+                        ffn(blk, mix.finish(q))
+                else:
+                    for blk in g:
+                        ffn(blk, mix.forward(blk["mixed"]))
+                for c in cs:
+                    moe.route(c)
                 if pending is not None:
                     finish()
                 moe.start(cs)

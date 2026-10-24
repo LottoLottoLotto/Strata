@@ -275,49 +275,49 @@ class _Const:
 
 class _StepInputs:
     """Position-only device inputs of one call (RoPE tables, causal mask of the dense rows), shared by every QSA layer
-    of a step: the latest (mesh, positions) entry is kept, so the 12 layers of one decode step upload them once."""
-    key = None
-    tensors: dict = {}
+    of a step: the latest KEEP (mesh, positions) entries are kept, oldest created first out, so the 12 layers of one
+    decode step upload them once and a pipelined prompt block's entry outlives the next block's start (Qsa.start)."""
+    KEEP = 2
+    entries: dict = {}           # key -> {name: tensor}, in creation order
 
     @classmethod
     def get(cls, mesh, pos: list[int]) -> dict:
         key = (id(mesh), pos[0], len(pos))
-        if cls.key != key:
-            for t in cls.tensors.values():
-                if isinstance(t, ttnn.Tensor):
-                    ttnn.deallocate(t)
+        if key not in cls.entries:
+            while len(cls.entries) >= cls.KEEP:
+                _free(*cls.entries.pop(next(iter(cls.entries))).values())
             c, s = rope_cos_sin(pos)                                        # [T, 32] f32
-            cls.tensors = {}
+            tensors = {}
             for D in (HEAD_DIM, IDX_DIM):                                   # [1, T, 1, D], broadcast over heads:
                 C = np.ones((len(pos), D), f32)                             # y = x*C + swap_halves(x)*S, C = 1 and
                 S = np.zeros((len(pos), D), f32)                            # S = 0 beyond the 64 rotated dims
                 C[:, :ROPE_DIM] = np.concatenate([c, c], 1)
                 S[:, :ROPE_DIM] = np.concatenate([-s, s], 1)
-                cls.tensors[f"C{D}"] = _dev(mesh, C[None, :, None, :])
-                cls.tensors[f"S{D}"] = _dev(mesh, S[None, :, None, :])
-            cls.key = key
-        return cls.tensors
+                tensors[f"C{D}"] = _dev(mesh, C[None, :, None, :])
+                tensors[f"S{D}"] = _dev(mesh, S[None, :, None, :])
+            cls.entries[key] = tensors
+        return cls.entries[key]
 
     @classmethod
     def clear(cls) -> None:
-        """Free the cached entry (fnx.tt.trace: nothing allocated after a capture may stay alive across a replay)."""
-        for t in cls.tensors.values():
-            if isinstance(t, ttnn.Tensor):
-                ttnn.deallocate(t)
-        cls.key, cls.tensors = None, {}
+        """Free the cached entries (fnx.tt.trace: nothing allocated after a capture may stay alive across a replay)."""
+        for tensors in cls.entries.values():
+            _free(*tensors.values())
+        cls.entries = {}
 
     @classmethod
     def dense_mask(cls, mesh, pos: list[int], d: int):
         """Additive mask [1, 1, d*12, n_pad] of the first d rows (row t*12+h' -> pos[t]): -1e9 where cell > pos[t]."""
+        tensors = cls.get(mesh, pos)
         key = ("mask", d)
-        if key not in cls.tensors:
+        if key not in tensors:
             n_pad = -(-(pos[d - 1] + 1) // SPAN) * SPAN
             cells = _dev(mesh, np.arange(n_pad, dtype=f32)[None, None, None, :])
             rows = _dev(mesh, np.repeat(np.asarray(pos[:d], f32), GROUP)[None, None, :, None])
             later = ttnn.gt(cells, rows)                                    # 1.0 where cell > row position
-            cls.tensors[key] = ttnn.multiply(later, MASKED)
+            tensors[key] = ttnn.multiply(later, MASKED)
             _free(cells, rows, later)
-        return cls.tensors[key]
+        return tensors[key]
 
 
 class Qsa:
@@ -706,8 +706,24 @@ class Qsa:
     def forward(self, mixed, pos):
         """mixed: [1, 1, T, 2560] TILE (bf16 or f32), T logical rows = consecutive positions `pos` (host ints).
         Returns bo [1, 1, T, 2560] float32 TILE. Appends the T tokens to the KV cache and the indexer state;
-        `last_ids` holds every row's attended cells (ascending), `last` the call's selection statistics and times."""
+        `last_ids` holds every row's attended cells (ascending), `last` the call's selection statistics and times.
+        The phases below in sequence (TtModel.forward_prompt interleaves them over row blocks)."""
         t0 = time.perf_counter()
+        c = self.start(mixed, pos)
+        self.index(c)
+        t1 = time.perf_counter()
+        self.select(c)
+        t2 = time.perf_counter()
+        bo = self.finish(c)
+        self.last.update(us=dict(device_a=(t1 - t0) * 1e6, host=(t2 - t1) * 1e6,
+                                 device_b_dispatch=(time.perf_counter() - t2) * 1e6))
+        return bo
+
+    # ---- forward() in phases.  start(k + 1) may be dispatched after index(k) and before select(k) / finish(k): it
+    # needs the indexer pages index(k) uploads and appends K/V cells that block k's rows only see masked (dense
+    # padding: exact zeros after the softmax) or never select, so every block computes what forward() computes.
+    def start(self, mixed, pos) -> dict:
+        """Device: projections, K/V append, block scores; the [mixed | s~] read-back is queued, not awaited."""
         pos = [int(p) for p in pos]
         T = len(pos)
         if mixed.shape[-2] != T:
@@ -717,21 +733,32 @@ class Qsa:
         if pos[0] < 0 or pos[-1] >= self.max_ctx:
             raise ValueError(f"positions {pos[0]}..{pos[-1]} outside max_ctx {self.max_ctx}")
         n_dense = sum(p <= DENSE_MAX_POS for p in pos)
-        sparse = n_dense < T
-        self.last = {}
         self.flush_pooled()                  # P2 pages a traced step deferred (fnx.tt.trace)
-        dev = self._project(mixed, pos, sparse)
-        xh, sd = self._readback(mixed, dev, T)
-        t1 = time.perf_counter()
-        done = self._index(xh, pos)
-        self._upload_pooled(done)
-        sel = self._select(xh, pos, sd, n_dense, dev["qi"]) if sparse else []
+        dev = self._project(mixed, pos, n_dense < T)
+        both = self._readback_dev(mixed, dev)
+        host = ttnn.from_device(both, blocking=False)
+        return dict(pos=pos, T=T, n_dense=n_dense, dev=dev, both=both, host=host,
+                    event=ttnn.record_event(self.mesh, 0))
+
+    def index(self, c: dict) -> None:
+        """Host: wait for the read-back, append the rows to the host indexer, upload the completed blocks' pages."""
+        ttnn.event_synchronize(c.pop("event"))
+        host = ttnn.to_torch(c.pop("host")).float().numpy().reshape(c["T"], -1)
+        ttnn.deallocate(c.pop("both"))
+        c["xh"], c["sd"] = self._split_host(host)
+        self._upload_pooled(self._index(c["xh"], c["pos"]))
+
+    def select(self, c: dict) -> None:
+        """Host: the sparse rows' exact cell selection, uploaded as gather ids."""
+        pos, n_dense, dev = c["pos"], c["n_dense"], c["dev"]
+        self.last = {}
+        sel = self._select(c.pop("xh"), pos, c.pop("sd"), n_dense, dev["qi"]) if n_dense < c["T"] else []
         _free(dev["qi"])
-        ids = self._sparse_ids(sel)
-        t2 = time.perf_counter()
+        c["ids"] = self._sparse_ids(sel)
         self.last_ids = [np.arange(p + 1) for p in pos[:n_dense]] + sel
-        bo = self._attend(dev, pos, n_dense, ids)
-        _free(*ids)
-        self.last.update(us=dict(device_a=(t1 - t0) * 1e6, host=(t2 - t1) * 1e6,
-                                 device_b_dispatch=(time.perf_counter() - t2) * 1e6))
+
+    def finish(self, c: dict):
+        """Device: attention over the selected cells, gate, output projection -> bo [1, 1, T, 2560] float32 TILE."""
+        bo = self._attend(c["dev"], c["pos"], c["n_dense"], c["ids"])
+        _free(*c["ids"])
         return bo

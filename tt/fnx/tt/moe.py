@@ -474,17 +474,23 @@ class Moe:
             r = ttnn.to_layout(r, ttnn.TILE_LAYOUT)
         return ttnn.add(y, r)
 
-    # ---- the call in two phases, for pipelined prompt reads (TtModel.forward_prompt): begin() routes a row block
-    # while the CPU experts of earlier blocks still run; start() runs the CPU experts of several begun blocks as ONE
-    # library call (more tokens per expert: the weights are decoded once per group of up to 8 tokens) after the
-    # earlier blocks' complete().  The device arithmetic is forward()'s, op for op; a token's CPU expert rows may
-    # round differently than in a one-block call when its expert's token grouping changes (Strata #152).
+    # ---- the call in phases, for pipelined prompt reads (TtModel.forward_prompt): begin() queues a row block's router
+    # and read-back, route() routes it on the host while the device and the CPU experts of earlier blocks still run;
+    # start() runs the CPU experts of several routed blocks as ONE library call (more tokens per expert: the weights
+    # are decoded once per group of up to 8 tokens) after the earlier blocks' complete().  The device arithmetic is
+    # forward()'s, op for op; a token's CPU expert rows may round differently than in a one-block call when its
+    # expert's token grouping changes (Strata #152).
     def begin(self, mixed) -> dict:
-        """Device router + the read-back + the host routing of mixed [1,1,rows,2560]; starts nothing on the CPU.
-        mixed must stay allocated until complete() (the f32 MoE input may be mixed itself)."""
+        """Device router; the [x | logits] read-back is queued, not awaited (route() routes it).  mixed must stay
+        allocated until complete() (the f32 MoE input may be mixed itself)."""
         pr = self.pre(mixed)
-        host = pr["both"].cpu(blocking=True).to_numpy().reshape(pr["T"], N_EMBD + ROUTER_COLS)
-        return dict(pr=pr, p=self.plan(host, submit=False))
+        return dict(pr=pr, host=pr["both"].cpu(blocking=False), event=ttnn.record_event(self.mesh, 0))
+
+    def route(self, c: dict) -> None:
+        """Host: wait for begin()'s read-back and route it; starts nothing on the CPU."""
+        ttnn.event_synchronize(c.pop("event"))
+        host = c.pop("host").to_numpy().reshape(c["pr"]["T"], N_EMBD + ROUTER_COLS)
+        c["p"] = self.plan(host, submit=False)
 
     def start(self, cs: list[dict]) -> None:
         """Start the CPU experts of the begun blocks cs (one library call over their rows; the library runs one call

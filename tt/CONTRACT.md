@@ -237,13 +237,16 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   this host (Ryzen 9 9950X, 16 threads; 32 no faster) take 13.5 / 8.9 / 7.7 us per CPU slot at 256 / 1024 / 4096
   tokens per call, and bigger device chunks alone gave 3-7% (chunk 1024 at a 16K context).  So runs of whole chunks
   go as two groups of up to 4 chunks per call: the card keeps its 256-row calls (its state and arithmetic are bitwise
-  those of consecutive forward() calls; with 1-chunk groups the whole read is: 2600-token prompt, next-token logits
-  bitwise), one CPU expert call per group (1024 tokens: an expert's token grouping changes, so its rows may round as
-  Strata #152 describes), and per layer one group's CPU experts run while the card computes the other group's layer.
-  Engine (stdin-protocol bench, --spec 4, prompt cache off, 32K context, warm): 2K prompt 169.5 -> 206 tok/s (12.1 -> 9.9 s),
-  8K 137.6 -> 151 tok/s (59.5 -> 54.2 s); the 128 greedy tokens after each prompt unchanged, decode unchanged
-  (22.1-22.8 tok/s); test_serve PASS.  An 8K read is now bound by its 12 QSA layers (~1.8 s each, the card's sparse
-  attention plus the host selection in series), the rest by the CPU experts.
+  those of consecutive forward() calls), one CPU expert call per group (1024 tokens: an expert's token grouping
+  changes, so its rows may round as Strata #152 describes; measured: none did, the 2600-token prompt's next-token
+  logits are bitwise the chunk-by-chunk read's with 1- and 4-chunk groups), and per layer one group's CPU experts run
+  while the card computes the other group's layer.  The host work of a group hides behind the card too: every
+  block's MoE read-back is queued (Moe.begin, a record_event) and routed once the group's card work is dispatched
+  (Moe.route), and a QSA layer starts block k+1 before block k's host selection (Qsa.start / index / select /
+  finish, forward() is their sequence; _StepInputs keeps the two latest positions' inputs for it).  Engine
+  (stdin-protocol bench, --spec 4, prompt cache off, 32K context, warm): 2K prompt 169.5 -> 221 tok/s (12.1 -> 9.3 s),
+  8K 137.6 -> 177 tok/s (59.5 -> 46.4 s); the 128 greedy tokens after each prompt unchanged, decode unchanged
+  (22.4 tok/s); test_serve, test_qsa, test_qsa sparse, test_trace plain/spec/sparse PASS.
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's
