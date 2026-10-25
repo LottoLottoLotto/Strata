@@ -293,6 +293,23 @@ Every module with per-sequence device state exposes `state_tensors() -> list` of
   the activations to the decoded weights with a +128 activation offset (one vector op less per token and 64
   weights) is not exact - Q8_K maps every block's largest |x| to -128, whose negation wraps, so the current kernel
   computes |w| x -128 there whatever the sign; matching that costs what the trick saves.
+- Served-routing record and usage-ranked residents (2026-10-24; fnx.usage, fnx.paths.ROUTE_USAGE / ROUTE_RANK,
+  tools/usage_residents.py).  The engine (cpu MoE) counts every routed token row's top-10 experts per layer after its
+  warm-up (Moe.plan: one bincount under a lock; prompt rows, decode rows and rejected draft rows alike) and adds them
+  to FNX_DATA/usage/<model>-route-usage.npz after each request, behind DONE (FNX_ROUTE_USAGE=<path>, "0" off;
+  test_serve turns it off).  Why it matters: the resident set (the 8823 hottest pairs of fnx.quant's calibration
+  counts) serves 62-64% of the routed slots of calibration-like text (calib / held-out counts), but 35.8% on a
+  3-request smoke record of the eval set's Newton Opticks book text (per layer 3-73%; per-expert routing correlation
+  with the calibration counts ~0 in the middle layers): routing is domain-specific, and the CPU's share of the expert
+  work - the 2K prompt reads' bound - follows it.  tools/usage_residents.py report gives the record's resident share
+  for the current set and for a set ranked by the record; build writes FNX_QUANT_DIR/stats-usage (read_counts'
+  per-layer L??.npz format) from the record's frequencies blended with the current ranking's (weight of the old
+  = prior / (prior + record rows), prior 20000 rows), then FNX_MODEL=iq3s FNX_ROUTE_RANK=<dir> python -m
+  fnx.quant.residents rebuilds the GPTQ values of the changed layers (verified on one layer: ~8 min incl. the forward
+  up to it; held-out error gptq 0.0163 vs search 0.0194, as before) and FNX_ROUTE_RANK=<dir> in the engine's env makes
+  it keep that set.  Expected effect: CPU expert work scales with 1 - resident share, so the payoff depends on how
+  concentrated the served traffic is; measure with `report` before rebuilding (the rebuild replaces the 23 GB store
+  in place, so the engine must be stopped, and going back means rebuilding again).
 - IQ3_S GPTQ card residents (2026-10-13; fnx.quant.residents, RTX 3090, 30 min): the 8823 default residents' values
   from GPTQ instead of min-MSE snapping.  ttnn holds a resident W [out, in] as is, so a BFP block is 16 consecutive
   input columns of one row (not the device MoE's 16 output rows): fnx.quant.methods.gptq_rows fixes a block's

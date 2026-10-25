@@ -67,6 +67,10 @@ dense decode step or verify window is ONE captured trace; "cpu" = Strata's own C
 (Strata-exact logits; 2 host round trips per layer; a resident set as bfloat8_b on the device, fnx.tt.moe).  The MTP
 drafter's 512 routed experts run on the device either way
 (fnx.tt.mtp: BFP4 from their Q2_0 values, fnx.tt.moe_device), so a traced draft round is one captured segment.
+
+Routing record (cpu MoE): after the warm-up, every routed token row's top-10 experts are counted per layer and added
+after each request to fnx.paths.ROUTE_USAGE (FNX_DATA/usage/<model>-route-usage.npz; FNX_ROUTE_USAGE=<path>, "0"
+off; fnx.usage), the served traffic tools/usage_residents.py ranks the card-resident experts by.
 """
 from __future__ import annotations
 
@@ -352,8 +356,9 @@ class Engine:
     free_R, reset, snapshot, restore, pos); `drafter` (Drafter | None): speculative decoding with the MTP drafts."""
 
     def __init__(self, model, emit, ctx: int = CTX_MAX, chunk: int = DEFAULT_CHUNK, prompt_cache: int = 6,
-                 eos=EOS_IDS, drafter: Drafter | None = None):
+                 eos=EOS_IDS, drafter: Drafter | None = None, usage=None):
         self.model, self.emit, self.drafter = model, emit, drafter
+        self.usage = usage                 # fnx.usage.Recorder: the served routing, added to its file per request
         self.ctx, self.chunk, self.prompt_cache, self.eos = ctx, chunk, prompt_cache, set(eos)
         self.live: list[int] = []          # tokens the model state has consumed (model.pos == len(live))
         self.live_ok = False               # a later request may continue from `live` (not after ckpt=0)
@@ -378,6 +383,11 @@ class Engine:
                 self.emit(f"ERR {e}")
                 return
             self.generate(ids, max_new, sp, stop)
+            if self.usage is not None:      # after DONE: the reply is not delayed; a failed write never fails serving
+                try:
+                    self.usage.flush()
+                except Exception as e:      # noqa: BLE001
+                    log(f"routing record: {self.usage.path}: {type(e).__name__}: {e}")
         elif line.startswith("GENI "):
             self.emit("ERR this engine was started without --vision")
         elif line == "VRAM" or line.startswith("VRAM "):
@@ -822,8 +832,14 @@ def main(argv=None) -> int:
                 f"{time.time() - t1:.1f} s; captured segments per forward: dense "
                 f"{sorted({n for (T, sp), n in segs.items() if sp is not None})}, sparse "
                 f"{sorted({n for (T, sp), n in segs.items() if sp is None})}")
+        usage = None
+        if paths.ROUTE_USAGE is not None and moe == "cpu":   # the served routing, after the warm-up's and captures'
+            from .usage import Recorder
+            usage = Recorder()
+            usage.attach(model)
+            log(f"routing record: {usage.path} (FNX_ROUTE_USAGE=0 turns it off; tools/usage_residents.py reads it)")
         engine = Engine(model, emit, ctx=ctx, chunk=chunk, prompt_cache=max(0, a.prompt_cache), eos=eos,
-                        drafter=drafter)
+                        drafter=drafter, usage=usage)
         log(f"ready in {time.time() - t0:.0f} s: context {ctx}, prompt chunk {chunk}, "
             f"{engine.prompt_cache} conversation checkpoints, eos {sorted(engine.eos)}, "
             + (f"MTP verify windows of {spec} rows (draft min_p {min_p}"

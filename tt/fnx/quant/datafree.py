@@ -45,8 +45,11 @@ def read_profile(path: Path | str = paths.EXPERT_PROFILE) -> np.ndarray:
 
 def read_counts(stats_dir: Path | str | None = None) -> np.ndarray:
     """[(layer, expert)] int32 [N_LAYERS * N_EXPERT, 2] hottest first by measured routing frequency (routings per
-    token of the layer): stats_dir/L{LL}.npz 'n' (tools/route_counts.py; the Coder's: fnx.quant.pipeline); default
+    token of the layer): stats_dir/L{LL}.npz 'n' (tools/route_counts.py; the Coder's: fnx.quant.pipeline;
+    tools/usage_residents.py: the served routing); default fnx.paths.ROUTE_RANK (FNX_ROUTE_RANK), else
     FNX_QUANT_DIR/stats when it holds counts, else the repository's fnx.paths.ROUTE_COUNTS ('calib')."""
+    if stats_dir is None and paths.ROUTE_RANK is not None:
+        stats_dir = paths.ROUTE_RANK
     d = Path(stats_dir) if stats_dir is not None else paths.QUANT / "stats"
     if (d / "L00.npz").exists():
         freq = np.stack([np.load(d / f"L{L:02d}.npz")["n"] for L in range(N_LAYERS)]).astype(np.float64)

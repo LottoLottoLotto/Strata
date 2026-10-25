@@ -90,6 +90,12 @@ DEV_DATA = "/var/tmp/strata-tt"
 DATA = _env_path("FNX_DATA", DEV_DATA)
 QUANT = _env_path("FNX_QUANT_DIR", DATA / f"quant{_SUF}")
 STORE = QUANT / "store"
+# The engine's record of the routing it served (fnx.usage; FNX_ROUTE_USAGE, "0" = off), and the routing counts the
+# card-resident experts are ranked by (fnx.quant.datafree.read_counts; FNX_ROUTE_RANK: a stats directory, e.g. the
+# one tools/usage_residents.py builds from the record; unset: QUANT/stats, else ROUTE_COUNTS)
+ROUTE_USAGE = os.environ.get("FNX_ROUTE_USAGE")
+ROUTE_USAGE = None if ROUTE_USAGE == "0" else Path(ROUTE_USAGE or DATA / "usage" / f"{MODEL}-route-usage.npz")
+ROUTE_RANK = Path(os.environ["FNX_ROUTE_RANK"]) if os.environ.get("FNX_ROUTE_RANK") else None
 MTP = DATA / "mtp"
 MTP_PROFILE = MTP / "expert-profile.npy"
 

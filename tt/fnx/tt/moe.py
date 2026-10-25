@@ -47,6 +47,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,7 @@ from ..cpu_experts import route
 TT_CACHE = str(paths.TT_CACHE)
 ROUTER_COLS = N_EXPERT + 32        # N_EXPERT router logits, column N_EXPERT = shared-expert gate, 31 zero columns
 PRODUCT_ERR = 2.0 ** -11           # device logit error bound per unit of ||x|| ||W_e|| (module docstring)
+_USAGE_LOCK = threading.Lock()     # Moe.usage: the served routing counts (fnx.usage)
 
 KDIR = Path(__file__).resolve().parent / "kernels" / "moe"
 KT, JT, NT = N_EMBD // 32, N_FF // 32, N_EMBD // 32     # 80 hidden tiles, 20 intermediate tiles, 80 output tiles
@@ -411,6 +413,7 @@ class Moe:
         self.dev = DeviceExperts(mesh, w, L, res, fmt=fmt, fidelity=fidelity) if len(res) else None
         self.local = self.dev.local if self.dev else np.full(N_EXPERT, -1, np.int32)
         self.last: dict = {}
+        self.usage = None          # fnx.usage.Recorder.attach: (routings [N_EXPERT], rows [1]) this layer adds to
 
     def reset(self) -> None:
         """The MoE block keeps no per-sequence state."""
@@ -442,6 +445,11 @@ class Moe:
                                                        s_cap if self.dev is not None else None)
         cpu = cpu_ids if (cpu_ids >= 0).any() else None
         parts = self.experts.submit(self.L, xh, cpu) if submit and cpu is not None else None
+        if self.usage is not None:     # the served routing (fnx.usage); blocks may route on threads
+            counts, rows = self.usage
+            with _USAGE_LOCK:
+                counts += np.bincount(ids.ravel(), minlength=N_EXPERT)
+                rows += T
         return Plan(T=T, x=xh, logits=lg, gate_logit=host[:, N_EMBD + N_EXPERT].copy(), ids=ids, wt=wt,
                     loc=self.local[ids], refined=n_refined, parts=parts, dev=self.dev, words=words, cpu_ids=cpu)
 

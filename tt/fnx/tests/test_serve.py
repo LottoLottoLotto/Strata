@@ -85,7 +85,8 @@ def dev_config(port: int) -> Path:
                     "--spec-min-p", "0.5"],
            "cwd": str(paths.REPO), "tokenizer": str(paths.PACK / "tokenizer"),
            "model_name": f"qwen3.8-flash-next-{paths.PACK.name}", "log": str(LOGS / "test-serve-strata.log"),
-           "lib_dirs": [], "port": port, "idle_unload_s": 900, "backend": "tt", "env": {"FNX_DATA": str(paths.DATA)}}
+           "lib_dirs": [], "port": port, "idle_unload_s": 900, "backend": "tt",
+           "env": {"FNX_DATA": str(paths.DATA), "FNX_ROUTE_USAGE": "0"}}   # test prompts are not the user's traffic
     p = LOGS / "test-serve-config.json"
     p.write_text(json.dumps(cfg, indent=2) + "\n")
     return p
