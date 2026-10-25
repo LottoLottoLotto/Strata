@@ -14,7 +14,8 @@ ignored.  INFO reports engine=<the repository's CMakeLists.txt version>.  Protoc
 stdout carries ONLY protocol lines (fd 1 is re-pointed to stderr at start, so library output goes to the log):
 `INFO key=val..`, `READY <ctx> stop`; per `GEN <max_new>[ key=val..] <id,id,..>`: `RESUME r`, `PP reached n ms
 tok/s` after every prompt chunk, `REUSED r`, `T <id>` per token (EOS 248044/248046 included), then exactly one
-`DONE generated n prompt_ms decode_ms finish 0 0 reused 0 0 0 0 0.0 read 0` (finish stop|length|cancel), or one
+`DONE generated n prompt_ms decode_ms finish accepted drafted reused 0 0 0 0 0.0 read 0` (finish stop|length|cancel;
+accepted / drafted: the MTP drafts the verify windows kept / proposed, 0 0 without the drafter), or one
 `ERR <reason>` instead.  `STOP` ends the running request (checked between prompt chunks and decode steps; a STOP
 that arrives before the next GEN is stale and dropped when that GEN is queued), `QUIT` / EOF exit.  `GENI` (no
 vision), `VRAM` (no elastic cache) answer ERR; `SAVE`/`RESTORE` answer `SERR invalid 0 ..` (no session files).
@@ -557,7 +558,8 @@ class Engine:
         self.live_ok = sp.ckpt and not cancelled
         self._drop_stale()
         self.stats = dict(st, tokens=len(out), decode_ms=decode_ms, prompt_ms=prompt_ms, finish=finish)
-        self.emit(f"DONE {len(out)} {n} {prompt_ms:.1f} {decode_ms:.1f} {finish} 0 0 {resume} 0 0 0 0 0.0 {read} 0")
+        self.emit(f"DONE {len(out)} {n} {prompt_ms:.1f} {decode_ms:.1f} {finish} {st['accepted']} {st['drafted']} "
+                  f"{resume} 0 0 0 0 0.0 {read} 0")
         spec = (f"; MTP {st['rounds']} windows, {st['accepted']}/{st['drafted']} drafts accepted "
                 f"({st['accepted'] / max(st['drafted'], 1):.2f}), {len(out) / max(st['rounds'], 1):.2f} tokens/window"
                 if dr is not None else "")
