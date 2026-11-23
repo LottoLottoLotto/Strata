@@ -199,6 +199,71 @@ void gu_rows(const uint8_t* blob, size_t gu_row, size_t up_off, int n, const voi
     }
 }
 
+// Wide groups (more than MAXT tokens of one expert, the TT port's prompt reads): a block's 4 chunks are decoded ONCE
+// for every token (row_dot decodes them once per call of at most 8 tokens), then the tokens run 8 at a time against
+// the decoded values, their float accumulators in memory.  Each token's operations and their order are row_dot's,
+// so every result is bitwise row_dot<TY, NT>'s, for any NT.
+template <int N>
+inline void apply_block(const __m512i* g, const __mmask64* m, const __m512i* sc, const block_q8_K* const* y, int i,
+                        float dx, __m512* accf) {
+    const __m512i zero = _mm512_setzero_si512();
+    __m512i acci[N];
+    for (int t = 0; t < N; ++t) acci[t] = _mm512_setzero_si512();
+    for (int j = 0; j < 4; ++j)
+        for (int t = 0; t < N; ++t) {
+            const __m512i yv = _mm512_loadu_si512((const void*) (y[t][i].qs + 64 * j));
+            const __m512i ys = _mm512_mask_sub_epi8(yv, m[j], zero, yv);
+            acci[t] = _mm512_add_epi32(acci[t], _mm512_madd_epi16(_mm512_maddubs_epi16(g[j], ys), sc[j]));
+        }
+    for (int t = 0; t < N; ++t)
+        accf[t] = _mm512_fmadd_ps(_mm512_set1_ps(dx * y[t][i].d), _mm512_cvtepi32_ps(acci[t]), accf[t]);
+}
+
+template <int TY>
+void row_dot_wide(const uint8_t* row, int nblocks, const block_q8_K* const* y, int nt, float* res) {
+    __m512 accf[kIq512WideMax];
+    for (int t = 0; t < nt; ++t) accf[t] = _mm512_setzero_ps();
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* blk = row + (size_t) i * Fmt<TY>::bytes;
+        if (prefetch_ahead > 0) {
+            const uint8_t* ahead = blk + (size_t) prefetch_ahead;
+            _mm_prefetch((const char*) ahead, _MM_HINT_T0);
+            _mm_prefetch((const char*) ahead + 64, _MM_HINT_T0);
+        }
+        __m512i g[4], sc[4];
+        __mmask64 m[4];
+        for (int j = 0; j < 4; ++j) Fmt<TY>::decode(blk, j, g[j], m[j], sc[j]);
+        const float dx = h2f(u16(blk)) * Fmt<TY>::K;
+        int t0 = 0;
+        for (; t0 + 8 <= nt; t0 += 8) apply_block<8>(g, m, sc, y + t0, i, dx, accf + t0);
+        switch (nt - t0) {
+            case 1: apply_block<1>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 2: apply_block<2>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 3: apply_block<3>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 4: apply_block<4>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 5: apply_block<5>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 6: apply_block<6>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            case 7: apply_block<7>(g, m, sc, y + t0, i, dx, accf + t0); break;
+            default: break;
+        }
+    }
+    for (int t = 0; t < nt; ++t) res[t] = _mm512_reduce_add_ps(accf[t]);
+}
+
+template <int TY>
+void gu_rows_wide(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                  float* const* ff, int r0, int r1) {
+    const block_q8_K* y[kIq512WideMax];
+    for (int t = 0; t < nt; ++t) y[t] = (const block_q8_K*) act[t];
+    const int nb = n / QK_K;
+    float g[kIq512WideMax], u[kIq512WideMax];
+    for (int r = r0; r < r1; ++r) {
+        row_dot_wide<TY>(blob + (size_t) r * gu_row, nb, y, nt, g);
+        row_dot_wide<TY>(blob + up_off + (size_t) r * gu_row, nb, y, nt, u);
+        for (int t = 0; t < nt; ++t) ff[t][r] = (g[t] / (1.f + std::exp(-g[t]))) * u[t];
+    }
+}
+
 template <int TY, int NT>
 void dot_rows(const uint8_t* w, size_t row_bytes, int n, const void* const* act, float* const* out, int r0, int r1) {
     const block_q8_K* y[NT];
@@ -221,7 +286,8 @@ void gu_rows_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n
         case 5: gu_rows<TY, 5>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 6: gu_rows<TY, 6>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 7: gu_rows<TY, 7>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
-        default: gu_rows<TY, 8>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 8: gu_rows<TY, 8>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        default: gu_rows_wide<TY>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;   // 9..kIq512WideMax
     }
 }
 
@@ -237,6 +303,67 @@ void dot_rows_nt(int nt, const uint8_t* w, size_t row_bytes, int n, const void* 
             const int k = nt - t0 < 4 ? nt - t0 : 4;
             dot_rows_nt<TY>(k, w, row_bytes, n, act + t0, out + t0, r0, r1);
         }
+    }
+}
+
+// ---- IQ4_NL rows (type 20: 32-value blocks of 18 bytes, f16 d + 16 nibble bytes) against Q8_0 activations, two
+// tokens per 512-bit register.  Each 256-bit half carries one token through iq_avx2's iq4nl_rows arithmetic lane for
+// lane: the |w| x sign-applied q8 integer dot of every 4 bytes (vpdpbusd; maddubs cannot saturate there, so the ints
+// are its), times dx * dy in the half's 8 float lanes by fmadd, and its hsum8 at the end - so every result is bitwise
+// the AVX2 kernel's.  The sign: q8 negated where w < 0 (sign_epi8 also zeroes where w == 0, but |w| = 0 there).
+inline float hsum8(__m256 v) {
+    const __m128 lo = _mm256_castps256_ps128(v), hi = _mm256_extractf128_ps(v, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_hadd_ps(s, s);
+    s = _mm_hadd_ps(s, s);
+    return _mm_cvtss_f32(s);
+}
+
+template <int NP, bool ODD>
+void iq4nl_rows(const uint8_t* w, size_t row_bytes, int n, const block_q8_0* const* y, float* const* out, int r0,
+                int r1) {
+    const __m128i values = _mm_loadu_si128((const __m128i*) kvalues_iq4nl);
+    const __m128i m4b = _mm_set1_epi8(0x0f);
+    const __m512i zero = _mm512_setzero_si512();
+    const int nb = n / QK4_NL;
+    for (int r = r0; r < r1; ++r) {
+        const uint8_t* row = w + (size_t) r * row_bytes;
+        __m512 acc[NP > 0 ? NP : 1];
+        for (int p = 0; p < NP; ++p) acc[p] = _mm512_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        for (int ib = 0; ib < nb; ++ib) {
+            const uint8_t* blk = row + (size_t) ib * sizeof(block_iq4_nl);
+            if (prefetch_ahead > 0) _mm_prefetch((const char*) blk + prefetch_ahead, _MM_HINT_T0);
+            const __m128i bits = _mm_loadu_si128((const __m128i*) (blk + 2));
+            const __m128i lo = _mm_and_si128(bits, m4b);
+            const __m128i hi = _mm_and_si128(_mm_srli_epi16(bits, 4), m4b);
+            const __m256i q4 = _mm256_inserti128_si256(_mm256_castsi128_si256(_mm_shuffle_epi8(values, lo)),
+                                                       _mm_shuffle_epi8(values, hi), 1);
+            const __m256i aq = _mm256_sign_epi8(q4, q4);
+            const __m512i aqz = _mm512_broadcast_i64x4(aq);
+            const __mmask64 neg = _mm512_movepi8_mask(_mm512_broadcast_i64x4(q4));
+            const float dx = h2f(u16(blk));
+            for (int p = 0; p < NP; ++p) {
+                const block_q8_0& a = y[2 * p][ib];
+                const block_q8_0& b = y[2 * p + 1][ib];
+                const __m512i q8 = _mm512_inserti64x4(_mm512_castsi256_si512(_mm256_loadu_si256((const __m256i*) a.qs)),
+                                                      _mm256_loadu_si256((const __m256i*) b.qs), 1);
+                const __m512i pz = _mm512_dpbusd_epi32(zero, aqz, _mm512_mask_sub_epi8(q8, neg, zero, q8));
+                const __m512 sc = _mm512_insertf32x8(_mm512_set1_ps(dx * h2f(a.d)), _mm256_set1_ps(dx * h2f(b.d)), 1);
+                acc[p] = _mm512_fmadd_ps(sc, _mm512_cvtepi32_ps(pz), acc[p]);
+            }
+            if constexpr (ODD) {
+                const block_q8_0& a = y[2 * NP][ib];
+                const __m256i q8 = _mm256_loadu_si256((const __m256i*) a.qs);
+                const __m256i p1 = _mm256_dpbusd_epi32(_mm256_setzero_si256(), aq, _mm256_sign_epi8(q8, q4));
+                acc1 = _mm256_fmadd_ps(_mm256_set1_ps(dx * h2f(a.d)), _mm256_cvtepi32_ps(p1), acc1);
+            }
+        }
+        for (int p = 0; p < NP; ++p) {
+            out[2 * p][r] = hsum8(_mm512_castps512_ps256(acc[p]));
+            out[2 * p + 1][r] = hsum8(_mm512_extractf32x8_ps(acc[p], 1));
+        }
+        if constexpr (ODD) out[2 * NP][r] = hsum8(acc1);
     }
 }
 
@@ -267,6 +394,22 @@ void iq512_rows(int type, const uint8_t* w, size_t row_bytes, int n, const void*
         case 21: dot_rows_nt<21>(nt, w, row_bytes, n, act, out, r0, r1); break;
         case 22: dot_rows_nt<22>(nt, w, row_bytes, n, act, out, r0, r1); break;
         default: break;
+    }
+}
+
+void iq4nl512_down_rows(const uint8_t* w, size_t row_bytes, int n, const void* const* hq, int nt, float* const* out,
+                        int r0, int r1) {
+    const block_q8_0* y[8];
+    for (int t = 0; t < nt; ++t) y[t] = (const block_q8_0*) hq[t];
+    switch (nt) {
+        case 1: iq4nl_rows<0, true>(w, row_bytes, n, y, out, r0, r1); break;
+        case 2: iq4nl_rows<1, false>(w, row_bytes, n, y, out, r0, r1); break;
+        case 3: iq4nl_rows<1, true>(w, row_bytes, n, y, out, r0, r1); break;
+        case 4: iq4nl_rows<2, false>(w, row_bytes, n, y, out, r0, r1); break;
+        case 5: iq4nl_rows<2, true>(w, row_bytes, n, y, out, r0, r1); break;
+        case 6: iq4nl_rows<3, false>(w, row_bytes, n, y, out, r0, r1); break;
+        case 7: iq4nl_rows<3, true>(w, row_bytes, n, y, out, r0, r1); break;
+        default: iq4nl_rows<4, false>(w, row_bytes, n, y, out, r0, r1); break;   // 8 (callers pass at most MAXT)
     }
 }
 

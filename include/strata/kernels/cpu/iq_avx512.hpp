@@ -8,11 +8,18 @@
 namespace strata::kernels::cpu {
 
 bool iq512_supported(int ggml_type) noexcept;
+/// Most tokens one iq512_gu_rows call takes: up to 8 run as one register-resident group; 9..kIq512WideMax decode each
+/// weight block once for all of them (bitwise the same per token).
+inline constexpr int kIq512WideMax = 32;
 /// ff[t][r] = silu(gate_r . a[t]) * (up_r . a[t]), rows [r0, r1); gate rows at blob, up rows at blob + up_off.
 void iq512_gu_rows(int ggml_type, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
                    int nt, float* const* ff, int r0, int r1);
 /// out[t][r] = w_r . a[t], rows [r0, r1).
 void iq512_rows(int ggml_type, const uint8_t* w, size_t row_bytes, int n, const void* const* act, int nt,
                 float* const* out, int r0, int r1);
+/// IQ4_NL (type 20) rows against Q8_0 activations, out[t][r] = w_r . hq[t] for rows [r0, r1), nt <= 8 tokens: two
+/// tokens per 512-bit register, bitwise iq4nl256_down_rows (iq_avx2.cpp) per token.
+void iq4nl512_down_rows(const uint8_t* w, size_t row_bytes, int n, const void* const* hq, int nt, float* const* out,
+                        int r0, int r1);
 
 }  // namespace strata::kernels::cpu
