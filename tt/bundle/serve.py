@@ -136,6 +136,9 @@ def main() -> None:
                     help="speculative decoding with the MTP draft layer (--spec 4 --spec-min-p 0.5 unless given)")
     ap.add_argument("--idle-unload", type=float, default=IDLE_UNLOAD_S,
                     help="unload the model after this many idle seconds (0: never; the next request loads it)")
+    ap.add_argument("--protocol-log", metavar="NAME",
+                    help="keep a copy of the engine protocol (prompt and output token ids) in "
+                         "FNX_DATA/logs/NAME.in / NAME.out (FNX_PROTOCOL_LOG, tt/bundle/engine.sh)")
     a, engine_args = ap.parse_known_args()
 
     release, shard1 = need("FNX_P150_DIR"), need("STRATA_GGUF")
@@ -169,6 +172,8 @@ def main() -> None:
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"strata-{PACK}.log"
     log.touch()
+    if a.protocol_log:
+        os.environ["FNX_PROTOCOL_LOG"] = str(logs / Path(a.protocol_log).name)
     cfg = {"exe": str(TT / "bundle" / "engine.sh"), "args": args, "cwd": str(ROOT), "tokenizer": str(tok),
            "model_name": MODEL_NAME, "log": str(log), "port": a.port, "backend": "tt", "open_browser": False,
            "idle_unload_s": a.idle_unload, "lib_dirs": [], "env": {"FNX_DATA": str(data)}}
