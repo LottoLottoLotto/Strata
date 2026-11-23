@@ -75,7 +75,8 @@ _SUF = "" if MODEL == "coder" else f"-{MODEL}"           # per-model artifact di
 REPO = Path(__file__).resolve().parents[2]            # <repo>/tt/fnx/paths.py
 TT_DIR = REPO / "tt"
 STRATA_TOOLS = _env_path("STRATA_TOOLS", REPO / "tools")           # gguf_reader.py, gguf_writer.py, strata_tokenizer.py
-EXPERT_PROFILE = REPO / "data" / _PROFILE                          # Strata's routing profile of the model
+# Strata's routing profile of the model (STRATA_DATA: a copy of the repository's data/, e.g. the fnx_cpu package's)
+EXPERT_PROFILE = _env_path("STRATA_DATA", REPO / "data") / _PROFILE
 PLE_ORACLE = REPO / "src" / "kernels" / "ple_oracle_vectors.inc"   # Strata's PLE oracle vectors (fnx.tests.test_ple)
 # project(strata VERSION x.y.z.w): the engine version (STRATA_CMAKELISTS: a copy, for an install without the repository's
 # root, e.g. the fnx_cpu package's strata-CMakeLists.txt in the tt-model bundle)

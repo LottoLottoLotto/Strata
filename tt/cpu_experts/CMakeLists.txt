@@ -4,6 +4,9 @@
 # Builds this repository's strata_kernels_cpu + ggml-cpu (no CUDA) as position-independent code and links them in.
 # STRATA_SRC defaults to the repository that contains tt/; STRATA_GGML_DIR is Strata's own option (empty: Strata
 # fetches its pinned llama.cpp commit, third_party/ggml/VERSION.txt).
+# As a Python package (pyproject.toml beside this file, scikit-build-core): `pip install tt/cpu_experts` installs
+# fnx_cpu/libfnx_cpu.so (fnx_cpu.LIB) built for other PCs: STRATA_PORTABLE (ggml-cpu's AVX2 baseline; the AVX-512
+# expert kernels are picked at run time as before) and FNX_ROUTE_MARCH=x86-64-v3 instead of the build host's CPU.
 cmake_minimum_required(VERSION 3.24)
 project(fnx_cpu LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
@@ -24,6 +27,18 @@ add_subdirectory(${STRATA_SRC} strata EXCLUDE_FROM_ALL)
 add_library(fnx_cpu SHARED fnx_cpu.cpp fnx_route.cpp fnx_qsa.cpp)
 # the routing step (fnx_route.cpp) only: AVX2 lanes for its exact f64 dot products; no FMA contraction, so its
 # bounds and weights keep the separately rounded products and sums the parity check pins
-set_source_files_properties(fnx_route.cpp PROPERTIES COMPILE_OPTIONS "-march=native;-ffp-contract=off")
+# FNX_ROUTE_MARCH: the CPU the routing step is compiled for (default: the build host's; x86-64-v3 = AVX2 + FMA for a
+# package that runs on other PCs - -ffp-contract=off keeps the rounding the same either way)
+set(FNX_ROUTE_MARCH "native" CACHE STRING "-march= of fnx_route.cpp")
+set_source_files_properties(fnx_route.cpp PROPERTIES COMPILE_OPTIONS "-march=${FNX_ROUTE_MARCH};-ffp-contract=off")
 target_link_libraries(fnx_cpu PRIVATE strata_kernels_cpu)
 target_include_directories(fnx_cpu PRIVATE ${STRATA_SRC}/include)
+if(SKBUILD)
+  # the wheel: the library; the repository's CMakeLists.txt (its `project(strata VERSION ...)` is the engine version
+  # fnx.serve_engine reports; fnx.paths.CMAKELISTS reads it through STRATA_CMAKELISTS); data/*.bin (the routing
+  # profiles and draft-vocabulary subsets, fnx.paths.STRATA_DATA), which tt-model's code staging does not ship
+  # COMPONENT fnx_cpu: the wheel installs only these (pyproject.toml), not ggml's own install rules
+  install(TARGETS fnx_cpu LIBRARY DESTINATION fnx_cpu COMPONENT fnx_cpu)
+  install(FILES ${STRATA_SRC}/CMakeLists.txt DESTINATION fnx_cpu RENAME strata-CMakeLists.txt COMPONENT fnx_cpu)
+  install(DIRECTORY ${STRATA_SRC}/data/ DESTINATION fnx_cpu/data COMPONENT fnx_cpu FILES_MATCHING PATTERN "*.bin")
+endif()

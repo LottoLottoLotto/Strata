@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: © 2026 Lottolabs
+# SPDX-License-Identifier: Apache-2.0
+#
+# libfnx_cpu.so as a Python package (fnx_cpu.LIB), for an image that has no compiler at run time (the tt-model
+# bundle, tt/bundle/): `pip install "fnx-cpu @ git+<this repository>@<ref>#subdirectory=tt/cpu_experts"` builds it
+# from this checkout (STRATA_SRC = the repository root, ggml = Strata's pinned llama.cpp commit) for other PCs.
+# tt/cpu_experts/build.sh (the build in the TT image, for the build host's CPU) stays the PC install's way.
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fnx-cpu"
+version = "0.1.40.4"
+description = "Strata's CPU expert, routing and QSA-selection kernels for the Tenstorrent P150 engine (fnx)"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.24"
+cmake.build-type = "Release"
+build.targets = ["fnx_cpu"]
+wheel.packages = ["fnx_cpu"]
+wheel.py-api = "py3"
+install.components = ["fnx_cpu"]
+sdist.cmake = false
+
+[tool.scikit-build.cmake.define]
+STRATA_PORTABLE = "ON"
+FNX_ROUTE_MARCH = "x86-64-v3"
